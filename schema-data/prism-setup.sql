@@ -15,7 +15,8 @@
 DEFINE prism_password = CHANGE_ME
 DEFINE db_service     = localhost:1521/FREEPDB1
 DEFINE pdb_name       = FREEPDB1
-DEFINE tablespace     = USERS
+DEFINE tablespace     = USERS -- for local
+-- DEFINE tablespace = DATA -- for ADB
 
 SET VERIFY OFF
 

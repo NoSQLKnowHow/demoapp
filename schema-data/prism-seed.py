@@ -24,6 +24,9 @@ import random
 import sys
 from datetime import datetime, timedelta
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import oracledb
 import oci
 
@@ -191,7 +194,7 @@ INFRASTRUCTURE_ASSETS = [
     # Reservoirs
     ("Northern Reservoir", "reservoir", 6, "active", "1978-09-10",
      "Primary potable water storage reservoir supplying the northern half of the city via Pipeline North-7.",
-     {"capacity_ml": 85, "depth_m": 12, "coverType": "floating cover", "treatmentOnsite": false}),
+     {"capacity_ml": 85, "depth_m": 12, "coverType": "floating cover", "treatmentOnsite": False}),
 
     # Solar Installations
     ("Greenfield Solar Array", "solar_installation", 4, "active", "2021-02-15",
@@ -666,16 +669,19 @@ Return ONLY the JSON array, no other text."""
 
 def get_connection():
     """Create and return an Oracle database connection."""
-    if ORACLE_WALLET_DIR:
+    wallet_dir = ORACLE_WALLET_DIR.strip() if ORACLE_WALLET_DIR else ""
+    if wallet_dir and os.path.isdir(wallet_dir):
+        print(f"  Using wallet connection (wallet dir: {wallet_dir})")
         return oracledb.connect(
             user=ORACLE_USER,
             password=ORACLE_PASSWORD,
             dsn=ORACLE_DSN,
-            config_dir=ORACLE_WALLET_DIR,
-            wallet_location=ORACLE_WALLET_DIR,
+            config_dir=wallet_dir,
+            wallet_location=wallet_dir,
             wallet_password=ORACLE_PASSWORD
         )
     else:
+        print(f"  Using direct connection (DSN: {ORACLE_DSN})")
         return oracledb.connect(
             user=ORACLE_USER,
             password=ORACLE_PASSWORD,
@@ -697,7 +703,6 @@ def insert_districts(cursor):
 def insert_assets(cursor):
     """Insert infrastructure asset records. Returns a mapping of asset name to asset_id."""
     print("Inserting infrastructure assets...")
-    asset_map = {}
 
     # First, get district IDs
     cursor.execute("SELECT district_id, name FROM districts")
@@ -715,7 +720,6 @@ def insert_assets(cursor):
                 (:district_id, :name, :asset_type, :status,
                  TO_DATE(:commissioned_date, 'YYYY-MM-DD'), :description,
                  JSON(:specifications))
-            RETURNING asset_id INTO :asset_id
         """, {
             "district_id": district_id,
             "name": name,
@@ -724,12 +728,9 @@ def insert_assets(cursor):
             "commissioned_date": comm_date,
             "description": description,
             "specifications": json.dumps(specs),
-            "asset_id": cursor.var(oracledb.NUMBER)
         })
-        asset_id = cursor.getimplicitresults()  # Get the returned asset_id
-        asset_map[name] = cursor.var(oracledb.NUMBER).getvalue()
 
-    # Re-fetch to get the actual mapping
+    # Fetch the generated asset IDs
     cursor.execute("SELECT asset_id, name FROM infrastructure_assets")
     asset_map = {row[1]: row[0] for row in cursor.fetchall()}
 
@@ -938,19 +939,19 @@ def generate_inspection_reports(client, cursor, asset_map):
                         (asset_id, inspector, inspect_date, overall_grade, summary)
                     VALUES
                         (:asset_id, :inspector, :inspect_date, :overall_grade, :summary)
-                    RETURNING report_id INTO :report_id
                 """, {
                     "asset_id": asset_id,
                     "inspector": report["inspector"],
                     "inspect_date": inspect_date,
                     "overall_grade": report["overall_grade"],
                     "summary": report["summary"],
-                    "report_id": cursor.var(oracledb.NUMBER)
                 })
-                report_id_var = cursor.var(oracledb.NUMBER)
-                # Re-fetch report_id
-                cursor.execute("SELECT MAX(report_id) FROM inspection_reports WHERE asset_id = :aid AND inspector = :insp",
-                               {"aid": asset_id, "insp": report["inspector"]})
+
+                # Fetch the generated report_id
+                cursor.execute("""
+                    SELECT MAX(report_id) FROM inspection_reports
+                    WHERE asset_id = :aid AND inspector = :insp
+                """, {"aid": asset_id, "insp": report["inspector"]})
                 report_id = cursor.fetchone()[0]
 
                 for finding in report.get("findings", []):
