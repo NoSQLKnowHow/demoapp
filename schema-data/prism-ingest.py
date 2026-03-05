@@ -1,0 +1,328 @@
+"""
+============================================================================
+PRISM: Vector Ingestion Pipeline
+============================================================================
+Reads maintenance log narratives, inspection report summaries, and
+inspection finding descriptions, chunks them using VECTOR_CHUNKS,
+generates embeddings using the ONNX DEMO_MODEL, and stores the results
+in the DOCUMENT_CHUNKS table.
+
+Usage:
+    python prism-ingest.py
+
+Run after: prism-seed.py (or prism-seed.sql)
+Run before: prism-indexes.sql
+
+Requires:
+    - python-oracledb
+    - DEMO_MODEL loaded in the database (see prism-setup.sql Section 8)
+    - Environment variables (see .env.example)
+============================================================================
+"""
+
+import json
+import os
+import sys
+import time
+
+import oracledb
+
+# ============================================================================
+# Configuration
+# ============================================================================
+
+ORACLE_DSN = os.environ.get("ORACLE_DSN")
+ORACLE_USER = os.environ.get("ORACLE_USER", "prism")
+ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD")
+ORACLE_WALLET_DIR = os.environ.get("ORACLE_WALLET_DIR")
+
+# Chunking configuration
+# These can be tuned based on the content characteristics.
+CHUNK_MAX_SIZE = 1000       # maximum chunk size in characters
+CHUNK_OVERLAP = 100         # overlap between chunks in characters
+CHUNK_SPLIT_BY = "sentence" # split strategy: sentence, word, character
+
+# Embedding model name (must match what was loaded in prism-setup.sql)
+EMBEDDING_MODEL = "DEMO_MODEL"
+
+# Batch size for database operations
+BATCH_SIZE = 50
+
+
+# ============================================================================
+# Database Connection
+# ============================================================================
+
+def get_connection():
+    """Create and return an Oracle database connection."""
+    if ORACLE_WALLET_DIR:
+        return oracledb.connect(
+            user=ORACLE_USER,
+            password=ORACLE_PASSWORD,
+            dsn=ORACLE_DSN,
+            config_dir=ORACLE_WALLET_DIR,
+            wallet_location=ORACLE_WALLET_DIR,
+            wallet_password=ORACLE_PASSWORD
+        )
+    else:
+        return oracledb.connect(
+            user=ORACLE_USER,
+            password=ORACLE_PASSWORD,
+            dsn=ORACLE_DSN
+        )
+
+
+# ============================================================================
+# Ingestion Pipeline
+# ============================================================================
+
+def chunk_and_embed(cursor, source_table, source_id, text):
+    """
+    Chunk a piece of text using VECTOR_CHUNKS, embed each chunk using
+    DEMO_MODEL, and insert the results into DOCUMENT_CHUNKS.
+
+    Returns the number of chunks created.
+    """
+    if not text or not text.strip():
+        return 0
+
+    # Step 1: Chunk the text using VECTOR_CHUNKS
+    cursor.execute("""
+        SELECT ct.chunk_offset, ct.chunk_length, ct.chunk_text
+        FROM TABLE(
+            VECTOR_CHUNKS(
+                :input_text,
+                JSON('{"max": :max_size, "overlap": :overlap, "split": ":split_by", "normalize": "all"}')
+            )
+        ) ct
+        ORDER BY ct.chunk_offset
+    """, {
+        "input_text": text,
+        "max_size": CHUNK_MAX_SIZE,
+        "overlap": CHUNK_OVERLAP,
+        "split_by": CHUNK_SPLIT_BY
+    })
+    chunks = cursor.fetchall()
+
+    if not chunks:
+        return 0
+
+    # Step 2 & 3: Embed each chunk and insert into DOCUMENT_CHUNKS
+    chunk_count = 0
+    for idx, (offset, length, chunk_text) in enumerate(chunks, start=1):
+        cursor.execute("""
+            INSERT INTO document_chunks (source_table, source_id, chunk_seq, chunk_text, embedding)
+            VALUES (
+                :source_table,
+                :source_id,
+                :chunk_seq,
+                :chunk_text,
+                VECTOR_EMBEDDING(:model_name USING :chunk_text AS data)
+            )
+        """, {
+            "source_table": source_table,
+            "source_id": source_id,
+            "chunk_seq": idx,
+            "chunk_text": chunk_text,
+            "model_name": EMBEDDING_MODEL
+        })
+        chunk_count += 1
+
+    return chunk_count
+
+
+def ingest_maintenance_logs(conn, cursor):
+    """Process all maintenance logs through the chunking and embedding pipeline."""
+    print("\n--- Ingesting Maintenance Logs ---")
+
+    cursor.execute("""
+        SELECT log_id, narrative
+        FROM maintenance_logs
+        WHERE log_id NOT IN (
+            SELECT DISTINCT source_id FROM document_chunks WHERE source_table = 'maintenance_logs'
+        )
+        ORDER BY log_id
+    """)
+    logs = cursor.fetchall()
+    print(f"  Found {len(logs)} logs to process.")
+
+    total_chunks = 0
+    processed = 0
+
+    for log_id, narrative in logs:
+        try:
+            chunks_created = chunk_and_embed(cursor, "maintenance_logs", log_id, narrative)
+            total_chunks += chunks_created
+            processed += 1
+
+            if processed % BATCH_SIZE == 0:
+                conn.commit()
+                print(f"  Processed {processed}/{len(logs)} logs ({total_chunks} chunks so far)...")
+
+        except Exception as e:
+            print(f"  ERROR processing log_id {log_id}: {e}")
+            conn.rollback()
+            continue
+
+    conn.commit()
+    print(f"  Completed: {processed} logs, {total_chunks} chunks created.")
+    return total_chunks
+
+
+def ingest_inspection_reports(conn, cursor):
+    """Process all inspection report summaries through the pipeline."""
+    print("\n--- Ingesting Inspection Report Summaries ---")
+
+    cursor.execute("""
+        SELECT report_id, summary
+        FROM inspection_reports
+        WHERE summary IS NOT NULL
+        AND report_id NOT IN (
+            SELECT DISTINCT source_id FROM document_chunks WHERE source_table = 'inspection_reports'
+        )
+        ORDER BY report_id
+    """)
+    reports = cursor.fetchall()
+    print(f"  Found {len(reports)} report summaries to process.")
+
+    total_chunks = 0
+    processed = 0
+
+    for report_id, summary in reports:
+        try:
+            chunks_created = chunk_and_embed(cursor, "inspection_reports", report_id, summary)
+            total_chunks += chunks_created
+            processed += 1
+
+            if processed % BATCH_SIZE == 0:
+                conn.commit()
+                print(f"  Processed {processed}/{len(reports)} reports ({total_chunks} chunks so far)...")
+
+        except Exception as e:
+            print(f"  ERROR processing report_id {report_id}: {e}")
+            conn.rollback()
+            continue
+
+    conn.commit()
+    print(f"  Completed: {processed} reports, {total_chunks} chunks created.")
+    return total_chunks
+
+
+def ingest_inspection_findings(conn, cursor):
+    """Process all inspection finding descriptions through the pipeline."""
+    print("\n--- Ingesting Inspection Finding Descriptions ---")
+
+    cursor.execute("""
+        SELECT finding_id, description
+        FROM inspection_findings
+        WHERE description IS NOT NULL
+        AND finding_id NOT IN (
+            SELECT DISTINCT source_id FROM document_chunks WHERE source_table = 'inspection_findings'
+        )
+        ORDER BY finding_id
+    """)
+    findings = cursor.fetchall()
+    print(f"  Found {len(findings)} finding descriptions to process.")
+
+    total_chunks = 0
+    processed = 0
+
+    for finding_id, description in findings:
+        try:
+            chunks_created = chunk_and_embed(cursor, "inspection_findings", finding_id, description)
+            total_chunks += chunks_created
+            processed += 1
+
+            if processed % BATCH_SIZE == 0:
+                conn.commit()
+                print(f"  Processed {processed}/{len(findings)} findings ({total_chunks} chunks so far)...")
+
+        except Exception as e:
+            print(f"  ERROR processing finding_id {finding_id}: {e}")
+            conn.rollback()
+            continue
+
+    conn.commit()
+    print(f"  Completed: {processed} findings, {total_chunks} chunks created.")
+    return total_chunks
+
+
+# ============================================================================
+# Main
+# ============================================================================
+
+def main():
+    print("=" * 72)
+    print("  PRISM: Vector Ingestion Pipeline")
+    print("=" * 72)
+
+    # Validate configuration
+    if not ORACLE_DSN or not ORACLE_PASSWORD:
+        print("ERROR: ORACLE_DSN and ORACLE_PASSWORD environment variables are required.")
+        sys.exit(1)
+
+    # Connect
+    print("\nConnecting to Oracle database...")
+    conn = get_connection()
+    cursor = conn.cursor()
+    print("  Connected.")
+
+    # Verify DEMO_MODEL is loaded
+    print("\nVerifying embedding model...")
+    cursor.execute("""
+        SELECT model_name FROM user_mining_models WHERE model_name = :model_name
+    """, {"model_name": EMBEDDING_MODEL})
+    model = cursor.fetchone()
+    if not model:
+        print(f"  ERROR: Embedding model '{EMBEDDING_MODEL}' not found.")
+        print("  Load the ONNX model first (see prism-setup.sql Section 8).")
+        cursor.close()
+        conn.close()
+        sys.exit(1)
+    print(f"  Model '{EMBEDDING_MODEL}' found.")
+
+    # Check source data availability
+    print("\nSource data counts:")
+    for table in ["maintenance_logs", "inspection_reports", "inspection_findings"]:
+        cursor.execute(f"SELECT COUNT(*) FROM {table}")
+        count = cursor.fetchone()[0]
+        print(f"  {table:30s} {count:>6d} rows")
+
+    if cursor.execute("SELECT COUNT(*) FROM maintenance_logs").fetchone()[0] == 0:
+        print("\nERROR: No source data found. Run prism-seed.py first.")
+        cursor.close()
+        conn.close()
+        sys.exit(1)
+
+    # Run ingestion
+    start_time = time.time()
+
+    log_chunks = ingest_maintenance_logs(conn, cursor)
+    report_chunks = ingest_inspection_reports(conn, cursor)
+    finding_chunks = ingest_inspection_findings(conn, cursor)
+
+    elapsed = time.time() - start_time
+
+    # Final summary
+    print("\n--- Ingestion Summary ---")
+    cursor.execute("SELECT source_table, COUNT(*) FROM document_chunks GROUP BY source_table ORDER BY source_table")
+    for row in cursor.fetchall():
+        print(f"  {row[0]:30s} {row[1]:>6d} chunks")
+
+    cursor.execute("SELECT COUNT(*) FROM document_chunks")
+    total = cursor.fetchone()[0]
+    print(f"  {'TOTAL':30s} {total:>6d} chunks")
+    print(f"\n  Elapsed time: {elapsed:.1f} seconds")
+
+    cursor.close()
+    conn.close()
+
+    print()
+    print("=" * 72)
+    print("  Vector ingestion complete.")
+    print("  Next step: Run prism-indexes.sql to create the HNSW vector index.")
+    print("=" * 72)
+
+
+if __name__ == "__main__":
+    main()
