@@ -2,7 +2,7 @@
 
 **Companion App for the Data Fundamentals Presentation Series**
 
-**Version:** 1.0
+**Version:** 1.1
 **Author:** Kirk (Oracle Developer Relations)
 **Last Updated:** March 5, 2026
 
@@ -574,11 +574,13 @@ Prism is designed to run in two configurations without code changes.
 ### 9.1 Local Development
 
 1. Developer clones the repo.
-2. Copies `.env.example` to `.env` and configures ADB connection details (DSN, user, password, wallet directory).
-3. Runs `docker compose up` (or runs FastAPI and React dev servers directly).
-4. Runs the setup script: `prism-setup.sql` creates all schema objects.
-5. Runs the seed script: `prism-seed.sql` loads CityPulse sample data.
-6. Runs the ingestion script: `python prism-ingest.py` executes the vector ingestion pipeline (chunking, embedding, storing) so developers can see the process in action, not just the result.
+2. Copies `.env.example` to `.env` and configures database connection details (DSN, user, password, wallet directory).
+3. Runs the setup script: `prism-setup.sql` creates all schema objects.
+4. Runs the seed script: `python prism-seed.py` loads CityPulse sample data from pre-generated JSON files in the `data/` directory.
+5. Runs the ingestion script: `python prism-ingest.py` executes the vector ingestion pipeline (chunking, embedding, storing) so developers can see the process in action, not just the result.
+6. Runs `docker compose up` (or runs FastAPI and React dev servers directly).
+
+**Note on seed data generation:** The `data/` directory ships with pre-generated JSON files for maintenance logs and inspection reports, so developers do not need LLM access to set up the database. If you need to regenerate this content (e.g., to change the volume or style), configure an LLM provider in `.env` and run `python prism-generate.py`. This is a one-time, optional step.
 
 ### 9.2 Hosted Demo (OCI)
 
@@ -601,7 +603,7 @@ Run `prism-setup.sql` against the ADB instance. This script:
 
 **Step 3: Load Seed Data**
 
-Run `prism-seed.sql` or `python prism-seed.py` to populate all tables with CityPulse sample data. This includes inserting JSON specifications into INFRASTRUCTURE_ASSETS and JSON procedure documents into OPERATIONAL_PROCEDURES.
+Run `python prism-seed.py` to populate all tables with CityPulse sample data. The script loads structural data (districts, assets, connections, operational procedures) from inline definitions, and loads narrative content (maintenance logs, inspection reports, findings) from pre-generated JSON files in the `data/` directory. No LLM access is required for this step.
 
 **Step 4: Run Vector Ingestion**
 
@@ -643,7 +645,14 @@ Run `prism-indexes.sql` to create:
 ORACLE_DSN=...
 ORACLE_USER=...
 ORACLE_PASSWORD=...
-ORACLE_WALLET_DIR=...
+ORACLE_WALLET_DIR=...            # leave empty for Oracle Free Docker
+
+# LLM Provider (only needed for prism-generate.py, not for normal setup)
+# Options: oci, claude, openai
+LLM_PROVIDER=claude
+ANTHROPIC_API_KEY=...            # when LLM_PROVIDER=claude
+OCI_COMPARTMENT_ID=...           # when LLM_PROVIDER=oci
+OPENAI_API_KEY=...               # when LLM_PROVIDER=openai
 
 # MongoDB API (Oracle Database API for MongoDB)
 MONGODB_URI=...                  # connection string for pymongo access
@@ -659,22 +668,39 @@ PRISM_ALLOW_WRITES=true|false
 
 ---
 
-## 10. Seed Data Requirements
+## 10. Seed Data Strategy
 
-The CityPulse subset needs enough volume to make demos meaningful but not so much that setup is slow.
+Seed data is split into two categories with different generation strategies:
+
+**Structural data** (defined inline in `prism-seed.py`): Districts, infrastructure assets, asset connections, and operational procedures. These are hand-authored and deterministic, producing identical results on every run.
+
+**Narrative content** (pre-generated in `data/` directory): Maintenance logs and inspection reports with findings. These are generated once by `prism-generate.py` using an LLM (OCI Generative AI, Anthropic Claude, or OpenAI), saved as JSON files, and checked into the repository. `prism-seed.py` loads from these files on every run, making database setup fast, free, and repeatable.
+
+The JSON files use `asset_name` as the reference key (not database IDs), so they remain valid regardless of what identity values the database generates. `prism-seed.py` resolves names to IDs after inserting the structural data.
+
+### 10.1 Target Row Counts
 
 | Table                   | Approximate Row Count | Notes                                          |
 |-------------------------|-----------------------|------------------------------------------------|
-| DISTRICTS               | 6-8                   | Mix of classification types                     |
-| INFRASTRUCTURE_ASSETS   | 30-50                 | Spread across districts, multiple types, each with JSON specifications |
-| OPERATIONAL_PROCEDURES  | 15-25                 | JSON documents covering electrical, structural, pipeline, emergency, and routine categories |
+| DISTRICTS               | 7                     | Mix of classification types                     |
+| INFRASTRUCTURE_ASSETS   | 28                    | Spread across districts, multiple types, each with JSON specifications |
+| OPERATIONAL_PROCEDURES  | 9                     | JSON documents covering electrical, structural, pipeline, emergency, and routine categories |
 | MAINTENANCE_LOGS        | 200-400               | Rich narrative text, varying severity and dates  |
 | INSPECTION_REPORTS      | 40-80                 | Spread across assets, meaningful summaries       |
 | INSPECTION_FINDINGS     | 120-250               | 2-5 findings per report, detailed descriptions   |
-| ASSET_CONNECTIONS       | 60-100                | Dense enough for interesting graph traversals    |
+| ASSET_CONNECTIONS       | 25                    | Dense enough for interesting graph traversals    |
 | DOCUMENT_CHUNKS         | ~800-1500             | Generated by ingestion pipeline from logs, reports, and findings |
 
-Maintenance log narratives, inspection report summaries, and finding descriptions are the most important seed data to get right. They need to be realistic, varied, and semantically rich so that vector search produces compelling results. Consider generating these with an LLM, then curating for quality.
+### 10.2 Regenerating Narrative Content
+
+If you need to regenerate the maintenance logs and inspection reports (e.g., to change volume, style, or quality):
+
+1. Configure `LLM_PROVIDER` and the corresponding API key in `.env`.
+2. Run `python prism-generate.py`.
+3. Review the output files in `data/maintenance_logs.json` and `data/inspection_reports.json`.
+4. Commit the updated files to the repository.
+
+Supported providers: OCI Generative AI (`oci`), Anthropic Claude (`claude`), OpenAI (`openai`).
 
 ---
 
