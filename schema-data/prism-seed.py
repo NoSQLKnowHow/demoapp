@@ -689,6 +689,30 @@ def get_connection():
         )
 
 
+def cleanup_tables(cursor):
+    """Delete all data from tables in the correct order (children first) for re-runs."""
+    print("Cleaning up existing data...")
+    # Order matters: children before parents to respect foreign keys.
+    # Using DELETE instead of TRUNCATE because Oracle's TRUNCATE fails
+    # on parent tables when enabled FK constraints exist, even if the
+    # child tables are already empty.
+    tables = [
+        "document_chunks",
+        "inspection_findings",
+        "inspection_reports",
+        "asset_connections",
+        "maintenance_logs",
+        "operational_procedures",
+        "infrastructure_assets",
+        "districts",
+    ]
+    for table in tables:
+        cursor.execute(f"DELETE FROM {table}")
+        count = cursor.rowcount
+        print(f"  Deleted {count} rows from {table}.")
+    print("  Cleanup complete.")
+
+
 def insert_districts(cursor):
     """Insert district records."""
     print("Inserting districts...")
@@ -1008,6 +1032,11 @@ def main():
     conn = get_connection()
     cursor = conn.cursor()
     print("  Connected.")
+
+    # Clean up any existing data from previous runs
+    print("\n--- Phase 0: Cleanup ---")
+    cleanup_tables(cursor)
+    conn.commit()
 
     # Insert structural data
     print("\n--- Phase 1: Structural Data ---")

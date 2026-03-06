@@ -25,6 +25,9 @@ import os
 import sys
 import time
 
+from dotenv import load_dotenv
+load_dotenv()
+
 import oracledb
 
 # ============================================================================
@@ -55,16 +58,19 @@ BATCH_SIZE = 50
 
 def get_connection():
     """Create and return an Oracle database connection."""
-    if ORACLE_WALLET_DIR:
+    wallet_dir = ORACLE_WALLET_DIR.strip() if ORACLE_WALLET_DIR else ""
+    if wallet_dir and os.path.isdir(wallet_dir):
+        print(f"  Using wallet connection (wallet dir: {wallet_dir})")
         return oracledb.connect(
             user=ORACLE_USER,
             password=ORACLE_PASSWORD,
             dsn=ORACLE_DSN,
-            config_dir=ORACLE_WALLET_DIR,
-            wallet_location=ORACLE_WALLET_DIR,
+            config_dir=wallet_dir,
+            wallet_location=wallet_dir,
             wallet_password=ORACLE_PASSWORD
         )
     else:
+        print(f"  Using direct connection (DSN: {ORACLE_DSN})")
         return oracledb.connect(
             user=ORACLE_USER,
             password=ORACLE_PASSWORD,
