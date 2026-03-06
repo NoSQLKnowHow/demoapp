@@ -1,26 +1,28 @@
 """
 ============================================================================
-PRISM: Seed Data Generator
+PRISM: Seed Data Loader
 ============================================================================
 Populates the Prism database with CityPulse sample data.
 
 Structural data (districts, assets, connections, procedures) is defined
 inline. Narrative content (maintenance logs, inspection reports, findings)
-is generated using an LLM for realistic, semantically rich text.
+is loaded from pre-generated JSON files in the data/ directory.
+
+To generate the JSON data files, run prism-generate.py first (one time).
 
 Usage:
     python prism-seed.py
 
 Requires:
     - python-oracledb
-    - oci (OCI SDK for Generative AI)
-    - Environment variables (see .env.example)
+    - python-dotenv
+    - Pre-generated data files in data/ directory
+    - Environment variables (see .env)
 ============================================================================
 """
 
 import json
 import os
-import random
 import sys
 from datetime import datetime, timedelta
 
@@ -28,7 +30,6 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import oracledb
-import oci
 
 # ============================================================================
 # Configuration
@@ -39,14 +40,10 @@ ORACLE_USER = os.environ.get("ORACLE_USER", "prism")
 ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD")
 ORACLE_WALLET_DIR = os.environ.get("ORACLE_WALLET_DIR")
 
-OCI_COMPARTMENT_ID = os.environ.get("OCI_COMPARTMENT_ID")
-OCI_GENAI_ENDPOINT = os.environ.get("OCI_GENAI_ENDPOINT", "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com")
-OCI_GENAI_MODEL = os.environ.get("OCI_GENAI_MODEL", "meta.llama-3.2-90b-vision-instruct")
-
-# Target counts
-TARGET_MAINTENANCE_LOGS = 300
-TARGET_INSPECTION_REPORTS = 60
-FINDINGS_PER_REPORT_RANGE = (2, 5)
+# Data files directory
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+MAINTENANCE_LOGS_FILE = os.path.join(DATA_DIR, "maintenance_logs.json")
+INSPECTION_REPORTS_FILE = os.path.join(DATA_DIR, "inspection_reports.json")
 
 # ============================================================================
 # Structural Data Definitions
@@ -209,458 +206,44 @@ INFRASTRUCTURE_ASSETS = [
 
 # Connections: (from_asset_name, to_asset_name, connection_type, description)
 ASSET_CONNECTIONS = [
-    # Sensor monitoring
     ("Harbor Bridge Sensor Array A", "Harbor Bridge", "monitors", "North pylon structural health monitoring"),
     ("Harbor Bridge Sensor Array B", "Harbor Bridge", "monitors", "South pylon and deck midspan monitoring"),
     ("Flood Gauge Station R1", "Riverside Pump Station", "monitors", "River level triggers pump activation"),
     ("Air Quality Monitor NI-01", "Northgate Freight Terminal", "monitors", "Perimeter air quality monitoring for freight operations"),
     ("Seismic Station CC-01", "Meridian Overpass", "monitors", "Strong-motion monitoring for structural assessment"),
-
-    # Power supply
     ("Substation Gamma", "Ironworks Water Treatment Plant", "powers", "Primary power supply for treatment plant operations"),
     ("Substation Gamma", "Harbor Bridge", "powers", "Bridge lighting and sensor power supply"),
     ("Substation Delta", "Northgate Freight Terminal", "powers", "Power supply for terminal cranes and facilities"),
     ("Substation Delta", "Comms Tower Beta", "powers", "Power supply for industrial communications"),
     ("Substation Epsilon", "Seismic Station CC-01", "powers", "Mains power with UPS backup"),
     ("Greenfield Solar Array", "Greenfield Booster Station", "powers", "Supplementary solar power for booster pumps"),
-
-    # Water flow
     ("Northern Reservoir", "Pipeline North-7", "feeds", "Potable water supply from reservoir to distribution"),
     ("Pipeline North-7", "Ironworks Water Treatment Plant", "feeds", "Raw water supply to treatment facility"),
     ("Pipeline South-3", "Greenfield Booster Station", "feeds", "Distribution main to pressure booster"),
     ("Ironworks Water Treatment Plant", "Harbor Outfall Main", "feeds", "Treated effluent discharge to harbor"),
     ("Riverside Pump Station", "Flood Gauge Station R1", "connects-to", "Pump station intake at gauge location"),
-
-    # Communications
     ("Comms Tower Alpha", "Comms Tower Beta", "connects-to", "Microwave backhaul link between towers"),
     ("Comms Tower Beta", "Harbor Relay Station", "connects-to", "Network relay for port operations"),
     ("Comms Tower Alpha", "Harbor Bridge Sensor Array A", "connects-to", "IoT data backhaul from bridge sensors"),
     ("Comms Tower Alpha", "Harbor Bridge Sensor Array B", "connects-to", "IoT data backhaul from bridge sensors"),
     ("Comms Tower Beta", "Air Quality Monitor NI-01", "connects-to", "Telemetry data backhaul"),
-
-    # Physical adjacency / structural support
     ("Harbor Seawall Section A", "Harbor Bridge", "supports", "Seawall protects bridge abutment foundations"),
     ("Meridian Cut Retaining Wall", "Meridian Overpass", "supports", "Retaining wall stabilizes overpass approach embankments"),
-
-    # Pipeline network connections
     ("Central Gas Distribution", "Substation Epsilon", "connects-to", "Gas supply for backup generation at substation"),
     ("Pipeline North-7", "Pipeline South-3", "connects-to", "Interconnection valve at distribution junction"),
 ]
 
 OPERATIONAL_PROCEDURES = [
-    {
-        "procedureId": "SOP-HV-001",
-        "title": "High Voltage Substation Inspection Protocol",
-        "category": "electrical",
-        "version": "3.2",
-        "lastRevised": "2025-11-15",
-        "estimatedDuration_min": 180,
-        "requiredPersonnel": 3,
-        "applicableAssetTypes": ["substation"],
-        "safetyChecklist": [
-            "Verify all circuits de-energized and locked out",
-            "Confirm grounding cables attached at all work points",
-            "PPE inspection: arc-flash suit (min CAT 3), insulated gloves (Class 2), face shield",
-            "Verify rescue equipment staged and accessible",
-            "Confirm communication with control room established"
-        ],
-        "equipment": [
-            "thermal imaging camera",
-            "insulation resistance tester (megger)",
-            "partial discharge detector",
-            "oil sampling kit",
-            "digital multimeter (CAT IV rated)"
-        ],
-        "steps": [
-            {"order": 1, "action": "Perform visual inspection of all transformer bushings and insulators", "notes": "Document any discoloration, cracks, or oil leaks with photos"},
-            {"order": 2, "action": "Conduct thermal scan of all bus connections and switchgear", "notes": "Flag any connection with temperature differential exceeding 10°C above ambient"},
-            {"order": 3, "action": "Perform insulation resistance testing on each transformer winding", "notes": "Minimum acceptable reading: 1 GΩ at 5 kV test voltage"},
-            {"order": 4, "action": "Collect oil samples from each transformer for dissolved gas analysis", "notes": "Use clean syringes; label with transformer ID and date"},
-            {"order": 5, "action": "Inspect cooling systems: fans, radiators, oil pumps", "notes": "Run each fan group for 2 minutes and verify operation"},
-            {"order": 6, "action": "Check protection relay settings and test trip circuits", "notes": "Do not perform live trip tests without control room authorization"},
-            {"order": 7, "action": "Inspect earthing system and measure ground resistance", "notes": "Maximum acceptable ground resistance: 1 Ω"}
-        ],
-        "escalation": {
-            "contact": "Grid Operations Center",
-            "phone": "555-0142",
-            "conditions": ["Evidence of active arcing", "Transformer oil level below minimum mark", "Ground fault detected", "Protection relay failure"]
-        }
-    },
-    {
-        "procedureId": "SOP-BR-001",
-        "title": "Bridge Structural Assessment Procedure",
-        "category": "structural",
-        "version": "2.1",
-        "lastRevised": "2025-08-20",
-        "estimatedDuration_min": 240,
-        "requiredPersonnel": 4,
-        "applicableAssetTypes": ["bridge"],
-        "safetyChecklist": [
-            "Traffic management plan approved and signage deployed",
-            "Fall protection harnesses inspected and worn by all personnel",
-            "Under-bridge inspection platform pre-positioned and load-tested",
-            "Marine traffic notified if working over navigable water",
-            "Weather check: postpone if wind exceeds 40 km/h or lightning within 10 km"
-        ],
-        "equipment": [
-            "Schmidt rebound hammer",
-            "ultrasonic thickness gauge",
-            "crack width comparator cards",
-            "half-cell potential meter",
-            "drone with high-resolution camera",
-            "GPS-enabled measurement tools"
-        ],
-        "steps": [
-            {"order": 1, "action": "Conduct drone survey of entire bridge deck and superstructure", "notes": "Capture ortho-mosaic imagery at minimum 2 cm/pixel resolution"},
-            {"order": 2, "action": "Inspect all expansion joints for debris, damage, and alignment", "notes": "Measure joint gap at 3 points per joint and compare to design values"},
-            {"order": 3, "action": "Perform concrete condition survey on substructure elements", "notes": "Use Schmidt hammer at 10 test points per pier; record rebound numbers"},
-            {"order": 4, "action": "Measure crack widths on all visible cracks exceeding 0.1 mm", "notes": "Map crack locations on structural drawings; flag any crack > 0.3 mm"},
-            {"order": 5, "action": "Conduct ultrasonic thickness measurements on steel elements", "notes": "Test at 5 points per member; flag any section loss exceeding 10%"},
-            {"order": 6, "action": "Inspect bearing assemblies for corrosion, displacement, and lubrication", "notes": "Photograph each bearing; note any lateral displacement > 5 mm"},
-            {"order": 7, "action": "Assess drainage system for blockages and erosion damage", "notes": "Flush each scupper and downpipe; verify discharge at outfall"},
-            {"order": 8, "action": "Review and update sensor calibration records for installed monitoring equipment", "notes": "Cross-reference live sensor readings with manual measurements"}
-        ],
-        "escalation": {
-            "contact": "Structural Engineering Division",
-            "phone": "555-0187",
-            "conditions": ["Any crack exceeding 1.0 mm width", "Section loss exceeding 25%", "Bearing displacement exceeding 15 mm", "Visible reinforcement corrosion"]
-        }
-    },
-    {
-        "procedureId": "SOP-PL-001",
-        "title": "Pressurized Pipeline Integrity Assessment",
-        "category": "pipeline",
-        "version": "4.0",
-        "lastRevised": "2025-10-02",
-        "estimatedDuration_min": 300,
-        "requiredPersonnel": 3,
-        "applicableAssetTypes": ["pipeline"],
-        "safetyChecklist": [
-            "Pipeline depressurized and isolated at both ends (double block and bleed)",
-            "Atmospheric monitoring: confirm no hazardous gases (LEL < 10%, O2 19.5-23.5%)",
-            "Confined space entry permit obtained if entering valve chambers",
-            "Traffic management in place for any road crossings",
-            "Emergency shutdown procedure reviewed with all team members"
-        ],
-        "equipment": [
-            "inline inspection pig launcher/receiver",
-            "magnetic flux leakage (MFL) tool",
-            "pipeline CCTV crawler",
-            "ultrasonic wall thickness gauge",
-            "pressure test pump and chart recorder"
-        ],
-        "steps": [
-            {"order": 1, "action": "Verify pipeline isolation and depressurization at all boundary valves", "notes": "Record valve positions and lock-out/tag-out details"},
-            {"order": 2, "action": "Launch CCTV inspection crawler from upstream access point", "notes": "Record video with distance counter; note any anomalies with timestamps"},
-            {"order": 3, "action": "Perform ultrasonic wall thickness measurements at accessible locations", "notes": "Minimum 5 readings per pipe section; focus on bends and joints"},
-            {"order": 4, "action": "Inspect all valve chambers for leaks, corrosion, and structural integrity", "notes": "Check valve stem packing, flange bolts, and chamber ventilation"},
-            {"order": 5, "action": "Conduct hydrostatic pressure test at 1.5x operating pressure", "notes": "Hold for minimum 2 hours; acceptable pressure drop: < 0.5%"},
-            {"order": 6, "action": "Inspect cathodic protection system: anodes, rectifiers, test stations", "notes": "Measure pipe-to-soil potential at each test station; target: -850 mV to -1200 mV (Cu/CuSO4)"},
-            {"order": 7, "action": "Survey pipeline route for surface settlement, erosion, or third-party damage", "notes": "Walk full route; compare surface levels to baseline survey"}
-        ],
-        "escalation": {
-            "contact": "Water Infrastructure Emergency Line",
-            "phone": "555-0129",
-            "conditions": ["Wall thickness below 60% of nominal", "Failed hydrostatic test", "Active leak detected", "Cathodic protection failure across multiple stations"]
-        }
-    },
-    {
-        "procedureId": "SOP-EM-001",
-        "title": "Emergency Pipeline Leak Response",
-        "category": "emergency",
-        "version": "5.1",
-        "lastRevised": "2026-01-10",
-        "estimatedDuration_min": 0,
-        "requiredPersonnel": 4,
-        "applicableAssetTypes": ["pipeline", "pump_station"],
-        "safetyChecklist": [
-            "Establish exclusion zone: minimum 25 m radius from leak source",
-            "Atmospheric monitoring continuous at exclusion zone boundary",
-            "Emergency services notified if gas or hazardous material involved",
-            "Downstream consumers notified of potential supply interruption",
-            "PPE: waterproof suit, respiratory protection if gas risk, steel-toe boots"
-        ],
-        "equipment": [
-            "pipe repair clamps (assorted sizes)",
-            "portable pump for dewatering",
-            "pipe freezing kit",
-            "leak sealing compound",
-            "portable generator and lighting"
-        ],
-        "steps": [
-            {"order": 1, "action": "Assess leak severity and classify: Category 1 (spray/gush), Category 2 (steady flow), Category 3 (seep/weep)", "notes": "Category 1 requires immediate isolation; Categories 2-3 allow time for planned repair"},
-            {"order": 2, "action": "Isolate the affected section using upstream and downstream valves", "notes": "Coordinate with SCADA control room for remote valve operations where available"},
-            {"order": 3, "action": "Establish dewatering and containment at the leak site", "notes": "Prevent uncontrolled runoff into stormwater drains or waterways"},
-            {"order": 4, "action": "Apply temporary repair (clamp, freeze, or seal) appropriate to pipe material and pressure", "notes": "Temporary repairs must be replaced with permanent repairs within 72 hours"},
-            {"order": 5, "action": "Restore pressure gradually and monitor repaired section for 30 minutes", "notes": "Increase pressure in 25% increments; hold at each stage for 5 minutes"},
-            {"order": 6, "action": "Document incident: location (GPS), pipe details, cause assessment, photos, repair method", "notes": "Submit incident report within 24 hours via CityPulse incident management system"}
-        ],
-        "escalation": {
-            "contact": "Emergency Operations Center",
-            "phone": "555-0911",
-            "conditions": ["Category 1 leak on any main exceeding 300 mm diameter", "Any gas leak", "Contamination risk to potable supply", "Road collapse or sinkhole formation"]
-        }
-    },
-    {
-        "procedureId": "SOP-CT-001",
-        "title": "Communications Tower Routine Maintenance",
-        "category": "communications",
-        "version": "2.0",
-        "lastRevised": "2025-06-18",
-        "estimatedDuration_min": 150,
-        "requiredPersonnel": 2,
-        "applicableAssetTypes": ["communication_tower"],
-        "safetyChecklist": [
-            "Tower climbing certification verified for all personnel",
-            "Fall arrest system inspected: harness, lanyards, rope grabs",
-            "RF exposure assessment completed; power reduction requested if needed",
-            "Weather check: no climbing if wind > 50 km/h, rain, or electrical storms",
-            "Rescue plan in place with qualified rescuer on standby"
-        ],
-        "equipment": [
-            "cable analyzer (sweep tester)",
-            "fiber optic power meter and OTDR",
-            "torque wrench set",
-            "coaxial connector toolkit",
-            "tower-rated tool lanyard system"
-        ],
-        "steps": [
-            {"order": 1, "action": "Inspect tower structure: legs, bracing, bolted connections, foundation", "notes": "Check for corrosion, loose bolts, cracked welds; torque-check sample of bolts"},
-            {"order": 2, "action": "Inspect all antenna mounts, brackets, and alignment", "notes": "Verify azimuth and tilt settings match RF design specifications"},
-            {"order": 3, "action": "Test all coaxial and fiber optic cable runs", "notes": "Sweep test coax for VSWR < 1.5:1; OTDR test fiber for splice loss < 0.1 dB"},
-            {"order": 4, "action": "Inspect obstruction lighting: daytime and nighttime modes", "notes": "Replace any failed lamps immediately; verify photocell operation at dusk"},
-            {"order": 5, "action": "Inspect grounding system from tower top to ground ring", "notes": "Measure ground resistance: maximum 5 Ω for telecommunications towers"},
-            {"order": 6, "action": "Clean and inspect equipment shelter: HVAC, UPS, batteries, fire suppression", "notes": "Check battery terminal voltage and ambient temperature; clean air filters"}
-        ],
-        "escalation": {
-            "contact": "Network Operations Center",
-            "phone": "555-0165",
-            "conditions": ["Structural member damage or missing bolts", "Obstruction lighting failure", "Ground resistance exceeding 10 Ω", "Equipment shelter temperature exceeding 35°C"]
-        }
-    },
-    {
-        "procedureId": "SOP-WTP-001",
-        "title": "Water Treatment Plant Process Audit",
-        "category": "water-treatment",
-        "version": "3.0",
-        "lastRevised": "2025-09-05",
-        "estimatedDuration_min": 360,
-        "requiredPersonnel": 3,
-        "applicableAssetTypes": ["treatment_plant"],
-        "safetyChecklist": [
-            "Chemical handling PPE available: chemical-resistant gloves, goggles, face shield",
-            "Safety showers and eyewash stations tested and accessible",
-            "Atmospheric monitoring in enclosed process areas",
-            "Chlorine gas detection system verified operational",
-            "Emergency chemical spill kit staged at audit locations"
-        ],
-        "equipment": [
-            "portable turbidity meter",
-            "pH/ORP meter with calibration standards",
-            "dissolved oxygen meter",
-            "sample bottles (sterile and non-sterile)",
-            "portable flow meter (ultrasonic)"
-        ],
-        "steps": [
-            {"order": 1, "action": "Review SCADA trends for previous 30 days: flow, turbidity, pH, chlorine residual", "notes": "Flag any exceedances of regulatory limits or unusual trends"},
-            {"order": 2, "action": "Inspect primary treatment: screens, grit removal, primary clarifiers", "notes": "Check scraper mechanisms, scum removal, and sludge blanket depth"},
-            {"order": 3, "action": "Inspect secondary treatment: aeration basins, dissolved oxygen control, return sludge pumps", "notes": "Verify DO setpoints match process design; check diffuser performance"},
-            {"order": 4, "action": "Inspect tertiary treatment and disinfection: filters, UV reactors, chlorination", "notes": "Check UV lamp intensity readings; verify chlorine dosing accuracy"},
-            {"order": 5, "action": "Audit chemical storage and delivery systems", "notes": "Verify chemical inventory matches records; check containment bunds and delivery systems for leaks"},
-            {"order": 6, "action": "Review laboratory QA/QC records and split-sample results", "notes": "Verify calibration records are current; check proficiency test results"},
-            {"order": 7, "action": "Inspect sludge handling: digesters, dewatering, biogas systems", "notes": "Check digester gas production rates; inspect dewatering press performance"},
-            {"order": 8, "action": "Review compliance reporting and regulatory correspondence", "notes": "Ensure all required reports submitted on time; note any outstanding corrective actions"}
-        ],
-        "escalation": {
-            "contact": "Environmental Compliance Manager",
-            "phone": "555-0134",
-            "conditions": ["Effluent quality exceeding discharge permit limits", "Chemical spill or uncontrolled release", "UV disinfection system failure", "Biogas system anomaly"]
-        }
-    },
-    {
-        "procedureId": "SOP-FLD-001",
-        "title": "Flood Event Response and Pump Station Operations",
-        "category": "emergency",
-        "version": "4.2",
-        "lastRevised": "2025-12-01",
-        "estimatedDuration_min": 0,
-        "requiredPersonnel": 3,
-        "applicableAssetTypes": ["pump_station", "sensor"],
-        "safetyChecklist": [
-            "Swift-water rescue team on standby if river level exceeds 5.0 m",
-            "Exclusion zone established around pump station wet well",
-            "Backup generator fuel level verified > 75%",
-            "Communication with Emergency Operations Center established",
-            "Road closure requests submitted to traffic management"
-        ],
-        "equipment": [
-            "portable submersible pump (backup)",
-            "sandbags and flood barriers",
-            "portable generator",
-            "water level data logger",
-            "satellite phone (communications backup)"
-        ],
-        "steps": [
-            {"order": 1, "action": "Activate flood monitoring protocol: 15-minute gauge readings, SCADA alarm monitoring", "notes": "Begin when river level exceeds 3.5 m at Flood Gauge Station R1"},
-            {"order": 2, "action": "Pre-position portable pumps and flood barriers at known vulnerable locations", "notes": "Priority locations: Riverside Corridor underpass, Harbor District low points"},
-            {"order": 3, "action": "Verify all permanent pump stations operational: run each pump for 2 minutes", "notes": "Check vibration levels and discharge pressure; switch to backup if anomaly detected"},
-            {"order": 4, "action": "At trigger level (4.2 m), activate Riverside Pump Station in automatic mode", "notes": "Confirm SCADA is receiving pump status and discharge flow data"},
-            {"order": 5, "action": "Deploy field crew to monitor overland flow paths and report blockages", "notes": "Focus on trash screens, culvert inlets, and road drainage grates"},
-            {"order": 6, "action": "Post-event: inspect all pump stations, clear debris, reset systems", "notes": "Document high-water marks with GPS; photograph all flood damage"}
-        ],
-        "escalation": {
-            "contact": "Emergency Operations Center",
-            "phone": "555-0911",
-            "conditions": ["River level exceeding 5.5 m (1% AEP event)", "Pump station failure during flood event", "Road inundation on arterial routes", "Threat to life or occupied buildings"]
-        }
-    },
-    {
-        "procedureId": "SOP-SW-001",
-        "title": "Seawall and Retaining Wall Annual Inspection",
-        "category": "structural",
-        "version": "1.3",
-        "lastRevised": "2025-07-22",
-        "estimatedDuration_min": 200,
-        "requiredPersonnel": 2,
-        "applicableAssetTypes": ["retaining_wall"],
-        "safetyChecklist": [
-            "Tidal schedule reviewed: inspection during low tide for seawalls",
-            "Fall protection for any work near wall crest or exposed edges",
-            "Marine vessel exclusion zone if inspecting from water side",
-            "Hard hat and high-visibility clothing at all times",
-            "First aid kit with hypothermia blanket for waterside work"
-        ],
-        "equipment": [
-            "crack monitoring pins and digital caliper",
-            "ground-penetrating radar (GPR) unit",
-            "survey-grade GPS for settlement measurements",
-            "underwater camera (for seawall toe inspection)",
-            "concrete coring drill (if sampling required)"
-        ],
-        "steps": [
-            {"order": 1, "action": "Survey wall crest and toe levels using GPS; compare to baseline", "notes": "Flag any settlement exceeding 15 mm since last survey"},
-            {"order": 2, "action": "Visual inspection of wall face: cracks, spalling, efflorescence, vegetation", "notes": "Map all defects on wall elevation drawings with chainage references"},
-            {"order": 3, "action": "Install or read crack monitoring pins on active cracks", "notes": "Record crack width to 0.05 mm precision; note any change since last reading"},
-            {"order": 4, "action": "Inspect drainage systems: weepholes, toe drains, backfill drainage", "notes": "Blocked weepholes indicate drainage failure and increased hydrostatic pressure"},
-            {"order": 5, "action": "Conduct GPR survey along wall crest to detect voids or erosion behind wall", "notes": "Focus on sections near stormwater outfalls and tidal zones"},
-            {"order": 6, "action": "For seawalls: inspect toe protection, armour units, and scour apron at low tide", "notes": "Photograph any displaced armour units; note scour depth measurements"}
-        ],
-        "escalation": {
-            "contact": "Coastal Engineering Division",
-            "phone": "555-0176",
-            "conditions": ["Settlement exceeding 50 mm", "Active crack growth exceeding 0.5 mm/year", "Void detected behind wall face", "Scour depth exceeding design allowance"]
-        }
-    },
-    {
-        "procedureId": "SOP-SOL-001",
-        "title": "Solar Installation Performance Audit",
-        "category": "electrical",
-        "version": "1.1",
-        "lastRevised": "2025-05-30",
-        "estimatedDuration_min": 120,
-        "requiredPersonnel": 2,
-        "applicableAssetTypes": ["solar_installation"],
-        "safetyChecklist": [
-            "DC isolation verified before any panel or string-level work",
-            "Arc-flash PPE for inverter cabinet access",
-            "Roof access safety: harness and anchor points for rooftop arrays",
-            "No work on wet panels or during rain",
-            "Verify fire isolation switches accessible and labeled"
-        ],
-        "equipment": [
-            "IV curve tracer",
-            "thermal imaging camera",
-            "digital multimeter (CAT III rated)",
-            "irradiance meter (pyranometer)",
-            "insulation resistance tester"
-        ],
-        "steps": [
-            {"order": 1, "action": "Review monitoring system data: production vs. expected yield for previous quarter", "notes": "Flag any string or inverter with output < 90% of expected"},
-            {"order": 2, "action": "Conduct thermal survey of all accessible panel strings", "notes": "Identify hot spots indicating cell damage, bypass diode failure, or connection issues"},
-            {"order": 3, "action": "Perform IV curve tracing on sample strings (minimum 10% of total)", "notes": "Compare to commissioning baseline; flag degradation > 2% per year"},
-            {"order": 4, "action": "Inspect inverter operation: error logs, cooling fans, AC output quality", "notes": "Check THD < 5% and power factor > 0.95 at rated output"},
-            {"order": 5, "action": "Inspect racking, mounting hardware, and grounding connections", "notes": "Check for corrosion, loose fasteners, and ground continuity"},
-            {"order": 6, "action": "Clean panels if soiling losses exceed 5% (based on irradiance comparison)", "notes": "Use deionized water only; no abrasive cleaning agents"}
-        ],
-        "escalation": {
-            "contact": "Renewable Energy Operations Manager",
-            "phone": "555-0198",
-            "conditions": ["Inverter failure or shutdown", "Ground fault detected in DC system", "Panel hot spot exceeding 30°C differential", "Production drop > 20% from baseline"]
-        }
-    }
+    {"procedureId": "SOP-HV-001", "title": "High Voltage Substation Inspection Protocol", "category": "electrical", "version": "3.2", "lastRevised": "2025-11-15", "estimatedDuration_min": 180, "requiredPersonnel": 3, "applicableAssetTypes": ["substation"], "safetyChecklist": ["Verify all circuits de-energized and locked out", "Confirm grounding cables attached at all work points", "PPE inspection: arc-flash suit (min CAT 3), insulated gloves (Class 2), face shield", "Verify rescue equipment staged and accessible", "Confirm communication with control room established"], "equipment": ["thermal imaging camera", "insulation resistance tester (megger)", "partial discharge detector", "oil sampling kit", "digital multimeter (CAT IV rated)"], "steps": [{"order": 1, "action": "Perform visual inspection of all transformer bushings and insulators", "notes": "Document any discoloration, cracks, or oil leaks with photos"}, {"order": 2, "action": "Conduct thermal scan of all bus connections and switchgear", "notes": "Flag any connection with temperature differential exceeding 10\u00b0C above ambient"}, {"order": 3, "action": "Perform insulation resistance testing on each transformer winding", "notes": "Minimum acceptable reading: 1 G\u03a9 at 5 kV test voltage"}, {"order": 4, "action": "Collect oil samples from each transformer for dissolved gas analysis", "notes": "Use clean syringes; label with transformer ID and date"}, {"order": 5, "action": "Inspect cooling systems: fans, radiators, oil pumps", "notes": "Run each fan group for 2 minutes and verify operation"}, {"order": 6, "action": "Check protection relay settings and test trip circuits", "notes": "Do not perform live trip tests without control room authorization"}, {"order": 7, "action": "Inspect earthing system and measure ground resistance", "notes": "Maximum acceptable ground resistance: 1 \u03a9"}], "escalation": {"contact": "Grid Operations Center", "phone": "555-0142", "conditions": ["Evidence of active arcing", "Transformer oil level below minimum mark", "Ground fault detected", "Protection relay failure"]}},
+    {"procedureId": "SOP-BR-001", "title": "Bridge Structural Assessment Procedure", "category": "structural", "version": "2.1", "lastRevised": "2025-08-20", "estimatedDuration_min": 240, "requiredPersonnel": 4, "applicableAssetTypes": ["bridge"], "safetyChecklist": ["Traffic management plan approved and signage deployed", "Fall protection harnesses inspected and worn by all personnel", "Under-bridge inspection platform pre-positioned and load-tested", "Marine traffic notified if working over navigable water", "Weather check: postpone if wind exceeds 40 km/h or lightning within 10 km"], "equipment": ["Schmidt rebound hammer", "ultrasonic thickness gauge", "crack width comparator cards", "half-cell potential meter", "drone with high-resolution camera", "GPS-enabled measurement tools"], "steps": [{"order": 1, "action": "Conduct drone survey of entire bridge deck and superstructure", "notes": "Capture ortho-mosaic imagery at minimum 2 cm/pixel resolution"}, {"order": 2, "action": "Inspect all expansion joints for debris, damage, and alignment", "notes": "Measure joint gap at 3 points per joint and compare to design values"}, {"order": 3, "action": "Perform concrete condition survey on substructure elements", "notes": "Use Schmidt hammer at 10 test points per pier; record rebound numbers"}, {"order": 4, "action": "Measure crack widths on all visible cracks exceeding 0.1 mm", "notes": "Map crack locations on structural drawings; flag any crack > 0.3 mm"}, {"order": 5, "action": "Conduct ultrasonic thickness measurements on steel elements", "notes": "Test at 5 points per member; flag any section loss exceeding 10%"}, {"order": 6, "action": "Inspect bearing assemblies for corrosion, displacement, and lubrication", "notes": "Photograph each bearing; note any lateral displacement > 5 mm"}, {"order": 7, "action": "Assess drainage system for blockages and erosion damage", "notes": "Flush each scupper and downpipe; verify discharge at outfall"}, {"order": 8, "action": "Review and update sensor calibration records for installed monitoring equipment", "notes": "Cross-reference live sensor readings with manual measurements"}], "escalation": {"contact": "Structural Engineering Division", "phone": "555-0187", "conditions": ["Any crack exceeding 1.0 mm width", "Section loss exceeding 25%", "Bearing displacement exceeding 15 mm", "Visible reinforcement corrosion"]}},
+    {"procedureId": "SOP-PL-001", "title": "Pressurized Pipeline Integrity Assessment", "category": "pipeline", "version": "4.0", "lastRevised": "2025-10-02", "estimatedDuration_min": 300, "requiredPersonnel": 3, "applicableAssetTypes": ["pipeline"], "safetyChecklist": ["Pipeline depressurized and isolated at both ends (double block and bleed)", "Atmospheric monitoring: confirm no hazardous gases (LEL < 10%, O2 19.5-23.5%)", "Confined space entry permit obtained if entering valve chambers", "Traffic management in place for any road crossings", "Emergency shutdown procedure reviewed with all team members"], "equipment": ["inline inspection pig launcher/receiver", "magnetic flux leakage (MFL) tool", "pipeline CCTV crawler", "ultrasonic wall thickness gauge", "pressure test pump and chart recorder"], "steps": [{"order": 1, "action": "Verify pipeline isolation and depressurization at all boundary valves", "notes": "Record valve positions and lock-out/tag-out details"}, {"order": 2, "action": "Launch CCTV inspection crawler from upstream access point", "notes": "Record video with distance counter; note any anomalies with timestamps"}, {"order": 3, "action": "Perform ultrasonic wall thickness measurements at accessible locations", "notes": "Minimum 5 readings per pipe section; focus on bends and joints"}, {"order": 4, "action": "Inspect all valve chambers for leaks, corrosion, and structural integrity", "notes": "Check valve stem packing, flange bolts, and chamber ventilation"}, {"order": 5, "action": "Conduct hydrostatic pressure test at 1.5x operating pressure", "notes": "Hold for minimum 2 hours; acceptable pressure drop: < 0.5%"}, {"order": 6, "action": "Inspect cathodic protection system: anodes, rectifiers, test stations", "notes": "Measure pipe-to-soil potential at each test station; target: -850 mV to -1200 mV (Cu/CuSO4)"}, {"order": 7, "action": "Survey pipeline route for surface settlement, erosion, or third-party damage", "notes": "Walk full route; compare surface levels to baseline survey"}], "escalation": {"contact": "Water Infrastructure Emergency Line", "phone": "555-0129", "conditions": ["Wall thickness below 60% of nominal", "Failed hydrostatic test", "Active leak detected", "Cathodic protection failure across multiple stations"]}},
+    {"procedureId": "SOP-EM-001", "title": "Emergency Pipeline Leak Response", "category": "emergency", "version": "5.1", "lastRevised": "2026-01-10", "estimatedDuration_min": 0, "requiredPersonnel": 4, "applicableAssetTypes": ["pipeline", "pump_station"], "safetyChecklist": ["Establish exclusion zone: minimum 25 m radius from leak source", "Atmospheric monitoring continuous at exclusion zone boundary", "Emergency services notified if gas or hazardous material involved", "Downstream consumers notified of potential supply interruption", "PPE: waterproof suit, respiratory protection if gas risk, steel-toe boots"], "equipment": ["pipe repair clamps (assorted sizes)", "portable pump for dewatering", "pipe freezing kit", "leak sealing compound", "portable generator and lighting"], "steps": [{"order": 1, "action": "Assess leak severity and classify", "notes": "Category 1 (spray/gush) requires immediate isolation"}, {"order": 2, "action": "Isolate the affected section using upstream and downstream valves", "notes": "Coordinate with SCADA control room"}, {"order": 3, "action": "Establish dewatering and containment at the leak site", "notes": "Prevent uncontrolled runoff"}, {"order": 4, "action": "Apply temporary repair appropriate to pipe material and pressure", "notes": "Replace with permanent repair within 72 hours"}, {"order": 5, "action": "Restore pressure gradually and monitor for 30 minutes", "notes": "Increase in 25% increments"}, {"order": 6, "action": "Document incident with GPS, photos, and cause assessment", "notes": "Submit report within 24 hours"}], "escalation": {"contact": "Emergency Operations Center", "phone": "555-0911", "conditions": ["Category 1 leak on main exceeding 300 mm", "Any gas leak", "Contamination risk to potable supply"]}},
+    {"procedureId": "SOP-CT-001", "title": "Communications Tower Routine Maintenance", "category": "communications", "version": "2.0", "lastRevised": "2025-06-18", "estimatedDuration_min": 150, "requiredPersonnel": 2, "applicableAssetTypes": ["communication_tower"], "safetyChecklist": ["Tower climbing certification verified", "Fall arrest system inspected", "RF exposure assessment completed", "Weather check: no climbing if wind > 50 km/h", "Rescue plan in place"], "equipment": ["cable analyzer", "fiber optic power meter and OTDR", "torque wrench set", "coaxial connector toolkit", "tower-rated tool lanyard system"], "steps": [{"order": 1, "action": "Inspect tower structure: legs, bracing, bolted connections, foundation", "notes": "Check for corrosion, loose bolts, cracked welds"}, {"order": 2, "action": "Inspect all antenna mounts, brackets, and alignment", "notes": "Verify azimuth and tilt match RF design"}, {"order": 3, "action": "Test all coaxial and fiber optic cable runs", "notes": "Sweep test coax; OTDR test fiber"}, {"order": 4, "action": "Inspect obstruction lighting", "notes": "Replace failed lamps immediately"}, {"order": 5, "action": "Inspect grounding system", "notes": "Maximum 5 ohm for telecom towers"}, {"order": 6, "action": "Clean and inspect equipment shelter", "notes": "Check HVAC, UPS, batteries, fire suppression"}], "escalation": {"contact": "Network Operations Center", "phone": "555-0165", "conditions": ["Structural damage", "Obstruction lighting failure", "Ground resistance exceeding 10 ohm"]}},
+    {"procedureId": "SOP-WTP-001", "title": "Water Treatment Plant Process Audit", "category": "water-treatment", "version": "3.0", "lastRevised": "2025-09-05", "estimatedDuration_min": 360, "requiredPersonnel": 3, "applicableAssetTypes": ["treatment_plant"], "safetyChecklist": ["Chemical handling PPE available", "Safety showers and eyewash tested", "Atmospheric monitoring in enclosed areas", "Chlorine gas detection verified", "Emergency spill kit staged"], "equipment": ["portable turbidity meter", "pH/ORP meter", "dissolved oxygen meter", "sample bottles", "portable flow meter"], "steps": [{"order": 1, "action": "Review SCADA trends for previous 30 days", "notes": "Flag any exceedances"}, {"order": 2, "action": "Inspect primary treatment", "notes": "Check scrapers, scum removal, sludge blanket"}, {"order": 3, "action": "Inspect secondary treatment", "notes": "Verify DO setpoints"}, {"order": 4, "action": "Inspect tertiary treatment and disinfection", "notes": "Check UV lamp intensity"}, {"order": 5, "action": "Audit chemical storage", "notes": "Verify inventory"}, {"order": 6, "action": "Review laboratory QA/QC", "notes": "Verify calibration records"}, {"order": 7, "action": "Inspect sludge handling", "notes": "Check digester gas production"}, {"order": 8, "action": "Review compliance reporting", "notes": "Ensure reports submitted on time"}], "escalation": {"contact": "Environmental Compliance Manager", "phone": "555-0134", "conditions": ["Effluent exceeding permit limits", "Chemical spill", "UV system failure"]}},
+    {"procedureId": "SOP-FLD-001", "title": "Flood Event Response and Pump Station Operations", "category": "emergency", "version": "4.2", "lastRevised": "2025-12-01", "estimatedDuration_min": 0, "requiredPersonnel": 3, "applicableAssetTypes": ["pump_station", "sensor"], "safetyChecklist": ["Swift-water rescue team on standby", "Exclusion zone around wet well", "Backup generator fuel > 75%", "Communication with EOC established", "Road closure requests submitted"], "equipment": ["portable submersible pump", "sandbags and flood barriers", "portable generator", "water level data logger", "satellite phone"], "steps": [{"order": 1, "action": "Activate flood monitoring protocol", "notes": "Begin at river level > 3.5 m"}, {"order": 2, "action": "Pre-position portable pumps and barriers", "notes": "Priority: Riverside underpass, Harbor low points"}, {"order": 3, "action": "Verify all permanent pump stations operational", "notes": "Run each pump for 2 minutes"}, {"order": 4, "action": "Activate Riverside Pump Station at trigger level", "notes": "Confirm SCADA receiving data"}, {"order": 5, "action": "Deploy field crew to monitor flow paths", "notes": "Focus on trash screens and culverts"}, {"order": 6, "action": "Post-event cleanup and inspection", "notes": "Document high-water marks with GPS"}], "escalation": {"contact": "Emergency Operations Center", "phone": "555-0911", "conditions": ["River level exceeding 5.5 m", "Pump station failure during event", "Road inundation"]}},
+    {"procedureId": "SOP-SW-001", "title": "Seawall and Retaining Wall Annual Inspection", "category": "structural", "version": "1.3", "lastRevised": "2025-07-22", "estimatedDuration_min": 200, "requiredPersonnel": 2, "applicableAssetTypes": ["retaining_wall"], "safetyChecklist": ["Tidal schedule reviewed", "Fall protection for crest work", "Marine exclusion zone if waterside", "Hard hat and high-vis at all times", "First aid kit with hypothermia blanket"], "equipment": ["crack monitoring pins and caliper", "ground-penetrating radar", "survey-grade GPS", "underwater camera", "concrete coring drill"], "steps": [{"order": 1, "action": "Survey wall crest and toe levels", "notes": "Flag settlement > 15 mm"}, {"order": 2, "action": "Visual inspection of wall face", "notes": "Map all defects on elevation drawings"}, {"order": 3, "action": "Install or read crack monitoring pins", "notes": "Record to 0.05 mm precision"}, {"order": 4, "action": "Inspect drainage systems", "notes": "Blocked weepholes indicate failure"}, {"order": 5, "action": "Conduct GPR survey along crest", "notes": "Focus near stormwater outfalls"}, {"order": 6, "action": "Inspect toe protection at low tide", "notes": "Note scour depth measurements"}], "escalation": {"contact": "Coastal Engineering Division", "phone": "555-0176", "conditions": ["Settlement > 50 mm", "Crack growth > 0.5 mm/year", "Void detected behind wall"]}},
+    {"procedureId": "SOP-SOL-001", "title": "Solar Installation Performance Audit", "category": "electrical", "version": "1.1", "lastRevised": "2025-05-30", "estimatedDuration_min": 120, "requiredPersonnel": 2, "applicableAssetTypes": ["solar_installation"], "safetyChecklist": ["DC isolation verified", "Arc-flash PPE for inverter access", "Roof access harness and anchors", "No work on wet panels", "Fire isolation switches accessible"], "equipment": ["IV curve tracer", "thermal imaging camera", "digital multimeter (CAT III)", "irradiance meter", "insulation resistance tester"], "steps": [{"order": 1, "action": "Review monitoring data vs expected yield", "notes": "Flag output < 90% expected"}, {"order": 2, "action": "Conduct thermal survey of panel strings", "notes": "Identify hot spots"}, {"order": 3, "action": "Perform IV curve tracing on sample strings", "notes": "Flag degradation > 2%/year"}, {"order": 4, "action": "Inspect inverter operation", "notes": "Check THD < 5%, PF > 0.95"}, {"order": 5, "action": "Inspect racking and grounding", "notes": "Check for corrosion"}, {"order": 6, "action": "Clean panels if soiling > 5%", "notes": "Deionized water only"}], "escalation": {"contact": "Renewable Energy Operations Manager", "phone": "555-0198", "conditions": ["Inverter failure", "DC ground fault", "Hot spot > 30C differential"]}},
 ]
-
-
-# ============================================================================
-# LLM Generation Prompts
-# ============================================================================
-
-MAINTENANCE_LOG_SYSTEM_PROMPT = """You are a technical writer generating realistic maintenance log entries for a smart city infrastructure management system called CityPulse. Each log entry is a narrative description of maintenance work performed, an incident observed, or a routine inspection finding.
-
-Guidelines:
-- Write in the voice of a field technician or maintenance engineer documenting their work.
-- Include specific technical details: measurements, part numbers, conditions observed, actions taken.
-- Vary the tone: some entries are routine ("replaced filter, all nominal"), some are concerning ("discovered hairline crack in weld joint"), some are urgent ("emergency callout for water main break").
-- Reference realistic infrastructure components: valves, sensors, transformers, pumps, joints, bearings, coatings, cathodic protection, etc.
-- Include environmental context where relevant: weather conditions, time of day, access difficulties.
-- Each narrative should be 3-8 sentences long.
-- Do NOT include any headers, bullet points, or formatting. Write as a single paragraph of plain text."""
-
-MAINTENANCE_LOG_USER_PROMPT = """Generate {count} unique maintenance log narratives for the following infrastructure asset:
-
-Asset Name: {asset_name}
-Asset Type: {asset_type}
-District: {district_name}
-Specifications: {specifications}
-
-Generate a mix of severities:
-- ~60% routine (scheduled maintenance, normal readings, minor adjustments)
-- ~25% warning (early signs of degradation, recommended follow-up, approaching thresholds)
-- ~15% critical (failures, emergency repairs, safety concerns)
-
-Return your response as a JSON array of objects, each with:
-- "severity": one of "routine", "warning", "critical"
-- "narrative": the log entry text (plain paragraph, no formatting)
-- "days_ago": a random number between 1 and 730 representing when this log was written
-
-Return ONLY the JSON array, no other text."""
-
-INSPECTION_REPORT_SYSTEM_PROMPT = """You are a senior infrastructure inspector generating formal inspection reports for a smart city infrastructure management system called CityPulse. Reports include a summary and detailed findings.
-
-Guidelines:
-- Write in formal, professional language appropriate for engineering inspection reports.
-- The summary should be 2-4 sentences providing an overall assessment.
-- Each finding should be specific, actionable, and reference observable conditions.
-- Include measurements, locations on the structure, and comparisons to standards where appropriate.
-- Recommendations should be concrete: "replace", "monitor quarterly", "schedule repair within 30 days", etc.
-- Grades: A (excellent), B (good, minor issues), C (fair, maintenance needed), D (poor, significant issues), F (critical, immediate action)."""
-
-INSPECTION_REPORT_USER_PROMPT = """Generate {count} unique inspection reports for the following infrastructure asset:
-
-Asset Name: {asset_name}
-Asset Type: {asset_type}
-District: {district_name}
-Specifications: {specifications}
-
-Generate a mix of grades:
-- ~30% grade A or B
-- ~50% grade C
-- ~20% grade D or F
-
-For each report, generate between 2 and 5 findings.
-
-Return your response as a JSON array of objects, each with:
-- "inspector": a realistic full name
-- "overall_grade": one of "A", "B", "C", "D", "F"
-- "summary": the report summary (2-4 sentences, plain text)
-- "days_ago": a random number between 1 and 1095 representing when this inspection was performed
-- "findings": an array of objects, each with:
-  - "category": a category like "structural", "electrical", "mechanical", "corrosion", "safety", "drainage", "coating"
-  - "severity": one of "low", "medium", "high", "critical"
-  - "description": the finding description (1-3 sentences)
-  - "recommendation": the recommended action (1-2 sentences)
-
-Return ONLY the JSON array, no other text."""
 
 
 # ============================================================================
@@ -692,10 +275,6 @@ def get_connection():
 def cleanup_tables(cursor):
     """Delete all data from tables in the correct order (children first) for re-runs."""
     print("Cleaning up existing data...")
-    # Order matters: children before parents to respect foreign keys.
-    # Using DELETE instead of TRUNCATE because Oracle's TRUNCATE fails
-    # on parent tables when enabled FK constraints exist, even if the
-    # child tables are already empty.
     tables = [
         "document_chunks",
         "inspection_findings",
@@ -728,7 +307,6 @@ def insert_assets(cursor):
     """Insert infrastructure asset records. Returns a mapping of asset name to asset_id."""
     print("Inserting infrastructure assets...")
 
-    # First, get district IDs
     cursor.execute("SELECT district_id, name FROM districts")
     district_map = {row[1]: row[0] for row in cursor.fetchall()}
 
@@ -754,7 +332,6 @@ def insert_assets(cursor):
             "specifications": json.dumps(specs),
         })
 
-    # Fetch the generated asset IDs
     cursor.execute("SELECT asset_id, name FROM infrastructure_assets")
     asset_map = {row[1]: row[0] for row in cursor.fetchall()}
 
@@ -798,209 +375,103 @@ def insert_procedures(cursor):
 
 
 # ============================================================================
-# LLM Content Generation
+# Load Pre-Generated Content from JSON Files
 # ============================================================================
 
-def get_genai_client():
-    """Create and return an OCI Generative AI inference client."""
-    config = oci.config.from_file()
-    return oci.generative_ai_inference.GenerativeAiInferenceClient(
-        config=config,
-        service_endpoint=OCI_GENAI_ENDPOINT
-    )
+def load_maintenance_logs(cursor, asset_map):
+    """Load maintenance logs from the pre-generated JSON file."""
+    print(f"Loading maintenance logs from {MAINTENANCE_LOGS_FILE}...")
 
+    with open(MAINTENANCE_LOGS_FILE, "r") as f:
+        logs = json.load(f)
 
-def generate_with_llm(client, system_prompt, user_prompt):
-    """Call the OCI Generative AI chat endpoint and return the response text."""
-    chat_request = oci.generative_ai_inference.models.ChatDetails(
-        compartment_id=OCI_COMPARTMENT_ID,
-        serving_mode=oci.generative_ai_inference.models.OnDemandServingMode(
-            model_id=OCI_GENAI_MODEL
-        ),
-        chat_request=oci.generative_ai_inference.models.GenericChatRequest(
-            messages=[
-                oci.generative_ai_inference.models.SystemMessage(content=[
-                    oci.generative_ai_inference.models.TextContent(text=system_prompt)
-                ]),
-                oci.generative_ai_inference.models.UserMessage(content=[
-                    oci.generative_ai_inference.models.TextContent(text=user_prompt)
-                ])
-            ],
-            max_tokens=4096,
-            temperature=0.8,
-            top_p=0.9
-        )
-    )
-
-    response = client.chat(chat_request)
-    return response.data.chat_response.choices[0].message.content[0].text
-
-
-def parse_json_response(response_text):
-    """Extract and parse JSON from an LLM response, handling markdown code blocks."""
-    text = response_text.strip()
-    # Strip markdown code fences if present
-    if text.startswith("```"):
-        lines = text.split("\n")
-        # Remove first and last lines (the fences)
-        lines = lines[1:]
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-        text = "\n".join(lines)
-    return json.loads(text)
-
-
-def generate_maintenance_logs(client, cursor, asset_map):
-    """Generate and insert maintenance logs using the LLM."""
-    print(f"\nGenerating {TARGET_MAINTENANCE_LOGS} maintenance logs via LLM...")
-
-    # Get asset details for prompts
-    cursor.execute("""
-        SELECT a.asset_id, a.name, a.asset_type, a.specifications, d.name AS district_name
-        FROM infrastructure_assets a
-        JOIN districts d ON a.district_id = d.district_id
-    """)
-    assets = cursor.fetchall()
-
-    # Distribute logs across assets (weighted toward more important/complex assets)
-    asset_weights = []
-    for asset in assets:
-        asset_type = asset[2]
-        weight = {
-            "bridge": 5, "substation": 4, "pipeline": 4, "treatment_plant": 4,
-            "pump_station": 3, "sensor": 2, "communication_tower": 2,
-            "retaining_wall": 2, "reservoir": 2, "solar_installation": 2,
-            "rail_terminal": 2
-        }.get(asset_type, 1)
-        asset_weights.append((asset, weight))
-
-    total_weight = sum(w for _, w in asset_weights)
-    total_inserted = 0
-
-    for asset, weight in asset_weights:
-        asset_id, asset_name, asset_type, specs, district_name = asset
-        count = max(3, round(TARGET_MAINTENANCE_LOGS * weight / total_weight))
-
-        print(f"  Generating {count} logs for {asset_name}...")
-
-        prompt = MAINTENANCE_LOG_USER_PROMPT.format(
-            count=count,
-            asset_name=asset_name,
-            asset_type=asset_type,
-            district_name=district_name,
-            specifications=json.dumps(json.loads(specs) if isinstance(specs, str) else specs, indent=2) if specs else "N/A"
-        )
-
-        try:
-            response = generate_with_llm(client, MAINTENANCE_LOG_SYSTEM_PROMPT, prompt)
-            logs = parse_json_response(response)
-
-            for log in logs:
-                log_date = datetime.now() - timedelta(days=log.get("days_ago", random.randint(1, 730)))
-                cursor.execute("""
-                    INSERT INTO maintenance_logs (asset_id, log_date, severity, narrative)
-                    VALUES (:asset_id, :log_date, :severity, :narrative)
-                """, {
-                    "asset_id": asset_id,
-                    "log_date": log_date,
-                    "severity": log["severity"],
-                    "narrative": log["narrative"]
-                })
-                total_inserted += 1
-
-        except Exception as e:
-            print(f"    ERROR generating logs for {asset_name}: {e}")
+    inserted = 0
+    skipped = 0
+    for log in logs:
+        asset_name = log["asset_name"]
+        if asset_name not in asset_map:
+            print(f"  WARNING: Skipping log for unknown asset '{asset_name}'")
+            skipped += 1
             continue
 
-    print(f"  Total maintenance logs inserted: {total_inserted}")
+        log_date = datetime.now() - timedelta(days=log.get("days_ago", 1))
+        cursor.execute("""
+            INSERT INTO maintenance_logs (asset_id, log_date, severity, narrative)
+            VALUES (:asset_id, :log_date, :severity, :narrative)
+        """, {
+            "asset_id": asset_map[asset_name],
+            "log_date": log_date,
+            "severity": log["severity"],
+            "narrative": log["narrative"],
+        })
+        inserted += 1
+
+    print(f"  Inserted {inserted} maintenance logs.")
+    if skipped:
+        print(f"  Skipped {skipped} logs (unknown asset names).")
 
 
-def generate_inspection_reports(client, cursor, asset_map):
-    """Generate and insert inspection reports and findings using the LLM."""
-    print(f"\nGenerating {TARGET_INSPECTION_REPORTS} inspection reports via LLM...")
+def load_inspection_reports(cursor, asset_map):
+    """Load inspection reports and findings from the pre-generated JSON file."""
+    print(f"Loading inspection reports from {INSPECTION_REPORTS_FILE}...")
 
-    # Focus on inspectable asset types
-    inspectable_types = ("bridge", "substation", "pipeline", "treatment_plant",
-                         "pump_station", "retaining_wall", "communication_tower",
-                         "solar_installation", "reservoir")
+    with open(INSPECTION_REPORTS_FILE, "r") as f:
+        reports = json.load(f)
 
-    cursor.execute("""
-        SELECT a.asset_id, a.name, a.asset_type, a.specifications, d.name AS district_name
-        FROM infrastructure_assets a
-        JOIN districts d ON a.district_id = d.district_id
-        WHERE a.asset_type IN :types
-    """, {"types": inspectable_types})
-    assets = cursor.fetchall()
-
-    # Distribute reports across assets
-    reports_per_asset = max(2, TARGET_INSPECTION_REPORTS // len(assets))
     total_reports = 0
     total_findings = 0
+    skipped = 0
 
-    for asset in assets:
-        asset_id, asset_name, asset_type, specs, district_name = asset
-        count = reports_per_asset
-
-        print(f"  Generating {count} reports for {asset_name}...")
-
-        prompt = INSPECTION_REPORT_USER_PROMPT.format(
-            count=count,
-            asset_name=asset_name,
-            asset_type=asset_type,
-            district_name=district_name,
-            specifications=json.dumps(json.loads(specs) if isinstance(specs, str) else specs, indent=2) if specs else "N/A"
-        )
-
-        try:
-            response = generate_with_llm(client, INSPECTION_REPORT_SYSTEM_PROMPT, prompt)
-            reports = parse_json_response(response)
-
-            for report in reports:
-                inspect_date = datetime.now() - timedelta(days=report.get("days_ago", random.randint(1, 1095)))
-
-                cursor.execute("""
-                    INSERT INTO inspection_reports
-                        (asset_id, inspector, inspect_date, overall_grade, summary)
-                    VALUES
-                        (:asset_id, :inspector, :inspect_date, :overall_grade, :summary)
-                """, {
-                    "asset_id": asset_id,
-                    "inspector": report["inspector"],
-                    "inspect_date": inspect_date,
-                    "overall_grade": report["overall_grade"],
-                    "summary": report["summary"],
-                })
-
-                # Fetch the generated report_id
-                cursor.execute("""
-                    SELECT MAX(report_id) FROM inspection_reports
-                    WHERE asset_id = :aid AND inspector = :insp
-                """, {"aid": asset_id, "insp": report["inspector"]})
-                report_id = cursor.fetchone()[0]
-
-                for finding in report.get("findings", []):
-                    cursor.execute("""
-                        INSERT INTO inspection_findings
-                            (report_id, category, severity, description, recommendation)
-                        VALUES
-                            (:report_id, :category, :severity, :description, :recommendation)
-                    """, {
-                        "report_id": report_id,
-                        "category": finding["category"],
-                        "severity": finding["severity"],
-                        "description": finding["description"],
-                        "recommendation": finding["recommendation"]
-                    })
-                    total_findings += 1
-
-                total_reports += 1
-
-        except Exception as e:
-            print(f"    ERROR generating reports for {asset_name}: {e}")
+    for report in reports:
+        asset_name = report["asset_name"]
+        if asset_name not in asset_map:
+            print(f"  WARNING: Skipping report for unknown asset '{asset_name}'")
+            skipped += 1
             continue
 
-    print(f"  Total inspection reports inserted: {total_reports}")
-    print(f"  Total inspection findings inserted: {total_findings}")
+        inspect_date = datetime.now() - timedelta(days=report.get("days_ago", 1))
+
+        cursor.execute("""
+            INSERT INTO inspection_reports
+                (asset_id, inspector, inspect_date, overall_grade, summary)
+            VALUES
+                (:asset_id, :inspector, :inspect_date, :overall_grade, :summary)
+        """, {
+            "asset_id": asset_map[asset_name],
+            "inspector": report["inspector"],
+            "inspect_date": inspect_date,
+            "overall_grade": report["overall_grade"],
+            "summary": report["summary"],
+        })
+
+        # Fetch the generated report_id
+        cursor.execute("""
+            SELECT MAX(report_id) FROM inspection_reports
+            WHERE asset_id = :aid AND inspector = :insp
+        """, {"aid": asset_map[asset_name], "insp": report["inspector"]})
+        report_id = cursor.fetchone()[0]
+
+        for finding in report.get("findings", []):
+            cursor.execute("""
+                INSERT INTO inspection_findings
+                    (report_id, category, severity, description, recommendation)
+                VALUES
+                    (:report_id, :category, :severity, :description, :recommendation)
+            """, {
+                "report_id": report_id,
+                "category": finding["category"],
+                "severity": finding["severity"],
+                "description": finding["description"],
+                "recommendation": finding["recommendation"],
+            })
+            total_findings += 1
+
+        total_reports += 1
+
+    print(f"  Inserted {total_reports} inspection reports.")
+    print(f"  Inserted {total_findings} inspection findings.")
+    if skipped:
+        print(f"  Skipped {skipped} reports (unknown asset names).")
 
 
 # ============================================================================
@@ -1009,7 +480,7 @@ def generate_inspection_reports(client, cursor, asset_map):
 
 def main():
     print("=" * 72)
-    print("  PRISM: Seed Data Generator")
+    print("  PRISM: Seed Data Loader")
     print("=" * 72)
     print()
 
@@ -1019,12 +490,22 @@ def main():
         missing.append("ORACLE_DSN")
     if not ORACLE_PASSWORD:
         missing.append("ORACLE_PASSWORD")
-    if not OCI_COMPARTMENT_ID:
-        missing.append("OCI_COMPARTMENT_ID")
-
     if missing:
         print(f"ERROR: Missing required environment variables: {', '.join(missing)}")
-        print("Set these variables and re-run.")
+        sys.exit(1)
+
+    # Check for data files
+    missing_files = []
+    if not os.path.isfile(MAINTENANCE_LOGS_FILE):
+        missing_files.append(MAINTENANCE_LOGS_FILE)
+    if not os.path.isfile(INSPECTION_REPORTS_FILE):
+        missing_files.append(INSPECTION_REPORTS_FILE)
+    if missing_files:
+        print("ERROR: Pre-generated data files not found:")
+        for f in missing_files:
+            print(f"  {f}")
+        print()
+        print("Run 'python prism-generate.py' first to generate the data files.")
         sys.exit(1)
 
     # Connect to database
@@ -1047,16 +528,13 @@ def main():
     conn.commit()
     print("\nStructural data committed.")
 
-    # Generate narrative content via LLM
-    print("\n--- Phase 2: LLM-Generated Content ---")
-    print("Initializing OCI Generative AI client...")
-    genai_client = get_genai_client()
-
-    generate_maintenance_logs(genai_client, cursor, asset_map)
+    # Load pre-generated content from JSON files
+    print("\n--- Phase 2: Load Generated Content ---")
+    load_maintenance_logs(cursor, asset_map)
     conn.commit()
     print("Maintenance logs committed.")
 
-    generate_inspection_reports(genai_client, cursor, asset_map)
+    load_inspection_reports(cursor, asset_map)
     conn.commit()
     print("Inspection reports committed.")
 
@@ -1074,7 +552,7 @@ def main():
 
     print()
     print("=" * 72)
-    print("  Seed data generation complete.")
+    print("  Seed data loading complete.")
     print("  Next step: Run python prism-ingest.py to vectorize content.")
     print("=" * 72)
 
