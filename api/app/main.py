@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_pool, close_pool
-from app.routers import relational
+from app.routers import relational, json_views
 
 
 @asynccontextmanager
@@ -49,8 +49,7 @@ app.add_middleware(
 
 # Register routers
 app.include_router(relational.router)
-# Future routers (will be added incrementally):
-# app.include_router(json_views.router)
+app.include_router(json_views.router)
 # app.include_router(graph.router)
 # app.include_router(vector.router)
 # app.include_router(ingest.router)
