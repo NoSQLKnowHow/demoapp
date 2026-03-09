@@ -1,2 +1,4 @@
 .DS_Store
 /model
+*.pyc
+*__init__.py
