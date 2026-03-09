@@ -30,7 +30,7 @@ PROMPT =========================================================================
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [1/10] Switching to PDB &pdb_name and creating PRISM user...
+PROMPT [1/12] Switching to PDB &pdb_name and creating PRISM user...
 
 ALTER SESSION SET CONTAINER = &pdb_name;
 
@@ -50,7 +50,7 @@ PROMPT         User PRISM created.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [2/10] Granting privileges...
+PROMPT [2/12] Granting privileges...
 
 -- Session and object creation
 GRANT CREATE SESSION TO prism;
@@ -81,7 +81,7 @@ PROMPT         Privileges granted.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [3/10] Connecting as PRISM user...
+PROMPT [3/12] Connecting as PRISM user...
 
 CONNECT prism/"&prism_password"@"&db_service"
 
@@ -92,7 +92,7 @@ PROMPT         Connected as PRISM.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [4/10] Creating canonical tables (DISTRICTS, INFRASTRUCTURE_ASSETS)...
+PROMPT [4/12] Creating canonical tables (DISTRICTS, INFRASTRUCTURE_ASSETS)...
 
 CREATE TABLE districts (
     district_id    NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -123,7 +123,7 @@ PROMPT         Table INFRASTRUCTURE_ASSETS created.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [5/10] Creating JSON collection table (OPERATIONAL_PROCEDURES)...
+PROMPT [5/12] Creating JSON collection table (OPERATIONAL_PROCEDURES)...
 
 CREATE JSON COLLECTION TABLE operational_procedures;
 
@@ -134,7 +134,7 @@ PROMPT         Table OPERATIONAL_PROCEDURES created.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [6/10] Creating remaining tables...
+PROMPT [6/12] Creating remaining tables...
 
 CREATE TABLE maintenance_logs (
     log_id       NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -194,7 +194,7 @@ PROMPT         Table DOCUMENT_CHUNKS created.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [7/10] Creating standard indexes...
+PROMPT [7/12] Creating standard indexes...
 
 -- Infrastructure assets
 CREATE INDEX idx_assets_district ON infrastructure_assets(district_id);
@@ -239,7 +239,7 @@ PROMPT         Indexes on DOCUMENT_CHUNKS created.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [8/10] ONNX Embedding Model
+PROMPT [8/12] ONNX Embedding Model
 PROMPT         NOTE: Model loading is environment-specific. Uncomment one of
 PROMPT         the options below or load the model manually.
 
@@ -278,7 +278,7 @@ PROMPT         Skipped (manual step). See comments in script.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [9/10] Creating JSON Duality View (INSPECTION_REPORT_DV)...
+PROMPT [9/12] Creating JSON Duality View (INSPECTION_REPORT_DV)...
 
 CREATE JSON RELATIONAL DUALITY VIEW inspection_report_dv AS
     inspection_reports @insert @update @delete {
@@ -304,7 +304,7 @@ PROMPT         Duality View INSPECTION_REPORT_DV created.
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [10/10] Creating SQL/PGQ property graph (CITYPULSE_GRAPH)...
+PROMPT [10/12] Creating SQL/PGQ property graph (CITYPULSE_GRAPH)...
 
 CREATE PROPERTY GRAPH citypulse_graph
     VERTEX TABLES (
@@ -323,6 +323,114 @@ CREATE PROPERTY GRAPH citypulse_graph
     );
 
 PROMPT         Property graph CITYPULSE_GRAPH created.
+
+-- ----------------------------------------------------------------------------
+-- 11. Create Vector Chunk Views
+-- ----------------------------------------------------------------------------
+-- These views pre-join DOCUMENT_CHUNKS with their source tables, making
+-- vector search queries simpler in the API layer. Individual views are
+-- provided for source-specific queries, and a unified view spans all
+-- content types for cross-source vector search.
+-- Note: These views are created now (with the schema) but will return
+-- no rows until prism-seed.py and prism-ingest.py have been run.
+-- ----------------------------------------------------------------------------
+
+PROMPT
+PROMPT [11/12] Creating vector chunk views...
+
+-- Individual source view: maintenance log chunks
+CREATE OR REPLACE VIEW v_chunks_maintenance_logs AS
+    SELECT dc.chunk_id, dc.source_id, dc.chunk_seq,
+           dc.chunk_text, dc.embedding,
+           ml.asset_id, ml.severity, ml.log_date,
+           a.name AS asset_name, a.asset_type,
+           d.district_id, d.name AS district_name
+    FROM document_chunks dc
+    JOIN maintenance_logs ml ON dc.source_id = ml.log_id
+    JOIN infrastructure_assets a ON ml.asset_id = a.asset_id
+    JOIN districts d ON a.district_id = d.district_id
+    WHERE dc.source_table = 'maintenance_logs';
+
+PROMPT         View V_CHUNKS_MAINTENANCE_LOGS created.
+
+-- Individual source view: inspection report summary chunks
+CREATE OR REPLACE VIEW v_chunks_inspection_reports AS
+    SELECT dc.chunk_id, dc.source_id, dc.chunk_seq,
+           dc.chunk_text, dc.embedding,
+           ir.asset_id, ir.overall_grade, ir.inspect_date, ir.inspector,
+           a.name AS asset_name, a.asset_type,
+           d.district_id, d.name AS district_name
+    FROM document_chunks dc
+    JOIN inspection_reports ir ON dc.source_id = ir.report_id
+    JOIN infrastructure_assets a ON ir.asset_id = a.asset_id
+    JOIN districts d ON a.district_id = d.district_id
+    WHERE dc.source_table = 'inspection_reports';
+
+PROMPT         View V_CHUNKS_INSPECTION_REPORTS created.
+
+-- Individual source view: inspection finding chunks
+CREATE OR REPLACE VIEW v_chunks_inspection_findings AS
+    SELECT dc.chunk_id, dc.source_id, dc.chunk_seq,
+           dc.chunk_text, dc.embedding,
+           inf.report_id, inf.category, inf.severity,
+           ir.asset_id, ir.inspect_date,
+           a.name AS asset_name, a.asset_type,
+           d.district_id, d.name AS district_name
+    FROM document_chunks dc
+    JOIN inspection_findings inf ON dc.source_id = inf.finding_id
+    JOIN inspection_reports ir ON inf.report_id = ir.report_id
+    JOIN infrastructure_assets a ON ir.asset_id = a.asset_id
+    JOIN districts d ON a.district_id = d.district_id
+    WHERE dc.source_table = 'inspection_findings';
+
+PROMPT         View V_CHUNKS_INSPECTION_FINDINGS created.
+
+-- Unified view: all chunks joined to source data with common columns.
+-- This is the primary view for cross-source vector search in the API.
+CREATE OR REPLACE VIEW v_chunks_unified AS
+    SELECT dc.chunk_id, dc.source_table, dc.source_id, dc.chunk_seq,
+           dc.chunk_text, dc.embedding,
+           ml.severity, ml.log_date AS source_date,
+           a.asset_id, a.name AS asset_name, a.asset_type,
+           d.district_id, d.name AS district_name
+    FROM document_chunks dc
+    JOIN maintenance_logs ml ON dc.source_id = ml.log_id
+    JOIN infrastructure_assets a ON ml.asset_id = a.asset_id
+    JOIN districts d ON a.district_id = d.district_id
+    WHERE dc.source_table = 'maintenance_logs'
+    UNION ALL
+    SELECT dc.chunk_id, dc.source_table, dc.source_id, dc.chunk_seq,
+           dc.chunk_text, dc.embedding,
+           ir.overall_grade AS severity, ir.inspect_date AS source_date,
+           a.asset_id, a.name AS asset_name, a.asset_type,
+           d.district_id, d.name AS district_name
+    FROM document_chunks dc
+    JOIN inspection_reports ir ON dc.source_id = ir.report_id
+    JOIN infrastructure_assets a ON ir.asset_id = a.asset_id
+    JOIN districts d ON a.district_id = d.district_id
+    WHERE dc.source_table = 'inspection_reports'
+    UNION ALL
+    SELECT dc.chunk_id, dc.source_table, dc.source_id, dc.chunk_seq,
+           dc.chunk_text, dc.embedding,
+           inf.severity, ir.inspect_date AS source_date,
+           a.asset_id, a.name AS asset_name, a.asset_type,
+           d.district_id, d.name AS district_name
+    FROM document_chunks dc
+    JOIN inspection_findings inf ON dc.source_id = inf.finding_id
+    JOIN inspection_reports ir ON inf.report_id = ir.report_id
+    JOIN infrastructure_assets a ON ir.asset_id = a.asset_id
+    JOIN districts d ON a.district_id = d.district_id
+    WHERE dc.source_table = 'inspection_findings';
+
+PROMPT         View V_CHUNKS_UNIFIED created.
+
+-- ----------------------------------------------------------------------------
+-- 12. Placeholder: Vector Index (deferred)
+-- ----------------------------------------------------------------------------
+
+PROMPT
+PROMPT [12/12] Vector index creation deferred.
+PROMPT         Run prism-indexes.sql after data loading and ingestion.
 
 -- ----------------------------------------------------------------------------
 -- Vector Index (deferred)
@@ -353,7 +461,7 @@ SELECT table_name FROM user_tables ORDER BY table_name;
 PROMPT
 PROMPT Views created:
 
-SELECT view_name FROM user_views WHERE view_name = 'INSPECTION_REPORT_DV';
+SELECT view_name FROM user_views ORDER BY view_name;
 
 PROMPT
 PROMPT Property graphs created:

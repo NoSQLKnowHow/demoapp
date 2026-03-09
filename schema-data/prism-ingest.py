@@ -3,20 +3,20 @@
 PRISM: Vector Ingestion Pipeline
 ============================================================================
 Reads maintenance log narratives, inspection report summaries, and
-inspection finding descriptions, chunks them using VECTOR_CHUNKS,
-generates embeddings using the ONNX DEMO_MODEL, and stores the results
-in the DOCUMENT_CHUNKS table.
+inspection finding descriptions, chunks them using
+DBMS_VECTOR_CHAIN.UTL_TO_CHUNKS, generates embeddings using the ONNX
+DEMO_MODEL, and stores the results in the DOCUMENT_CHUNKS table.
 
 Usage:
     python prism-ingest.py
 
-Run after: prism-seed.py (or prism-seed.sql)
+Run after: prism-seed.py
 Run before: prism-indexes.sql
 
 Requires:
     - python-oracledb
     - DEMO_MODEL loaded in the database (see prism-setup.sql Section 8)
-    - Environment variables (see .env.example)
+    - Environment variables (see .env)
 ============================================================================
 """
 
@@ -29,6 +29,11 @@ from dotenv import load_dotenv
 load_dotenv()
 
 import oracledb
+
+# Tell python-oracledb to return LOB columns as Python strings/bytes
+# instead of LOB objects. Without this, CLOB columns (like narrative)
+# return objects that don't support string methods like .strip().
+oracledb.defaults.fetch_lobs = False
 
 # ============================================================================
 # Configuration
@@ -82,31 +87,47 @@ def get_connection():
 # Ingestion Pipeline
 # ============================================================================
 
+# Build the UTL_TO_CHUNKS config JSON once (used in every chunk_and_embed call).
+CHUNK_PARAMS = json.dumps({
+    "max": CHUNK_MAX_SIZE,
+    "overlap": CHUNK_OVERLAP,
+    "split": CHUNK_SPLIT_BY,
+    "normalize": "all"
+})
+
+
 def chunk_and_embed(cursor, source_table, source_id, text):
     """
-    Chunk a piece of text using VECTOR_CHUNKS, embed each chunk using
-    DEMO_MODEL, and insert the results into DOCUMENT_CHUNKS.
+    Chunk a piece of text using DBMS_VECTOR_CHAIN.UTL_TO_CHUNKS, embed
+    each chunk using DEMO_MODEL, and insert the results into DOCUMENT_CHUNKS.
+
+    Uses UTL_TO_CHUNKS (PL/SQL package) instead of VECTOR_CHUNKS (SQL function)
+    because UTL_TO_CHUNKS accepts JSON parameters via bind variables and works
+    reliably across Oracle Free Docker and ADB environments.
 
     Returns the number of chunks created.
     """
-    if not text or not text.strip():
+    # Handle LOB objects and empty text
+    if hasattr(text, 'read'):
+        text = text.read()
+    if not text or not str(text).strip():
         return 0
+    text = str(text)
 
-    # Step 1: Chunk the text using VECTOR_CHUNKS
+    # Step 1: Chunk the text using DBMS_VECTOR_CHAIN.UTL_TO_CHUNKS
+    # Returns a VECTOR_ARRAY_T; each element is a JSON object with
+    # chunk_id, chunk_offset, chunk_length, and chunk_data fields.
     cursor.execute("""
-        SELECT ct.chunk_offset, ct.chunk_length, ct.chunk_text
+        SELECT et.column_value
         FROM TABLE(
-            VECTOR_CHUNKS(
+            DBMS_VECTOR_CHAIN.UTL_TO_CHUNKS(
                 :input_text,
-                JSON('{"max": :max_size, "overlap": :overlap, "split": ":split_by", "normalize": "all"}')
+                JSON(:chunk_params)
             )
-        ) ct
-        ORDER BY ct.chunk_offset
+        ) et
     """, {
         "input_text": text,
-        "max_size": CHUNK_MAX_SIZE,
-        "overlap": CHUNK_OVERLAP,
-        "split_by": CHUNK_SPLIT_BY
+        "chunk_params": CHUNK_PARAMS,
     })
     chunks = cursor.fetchall()
 
@@ -114,23 +135,40 @@ def chunk_and_embed(cursor, source_table, source_id, text):
         return 0
 
     # Step 2 & 3: Embed each chunk and insert into DOCUMENT_CHUNKS
+    # Note: VECTOR_EMBEDDING expects the model name as a SQL identifier,
+    # not a bind variable, so it is interpolated into the SQL string.
     chunk_count = 0
-    for idx, (offset, length, chunk_text) in enumerate(chunks, start=1):
-        cursor.execute("""
+    for idx, (chunk_value,) in enumerate(chunks, start=1):
+        # UTL_TO_CHUNKS returns JSON objects; extract the chunk text.
+        # The JSON structure has a "chunk_data" field with the text.
+        if isinstance(chunk_value, str):
+            try:
+                chunk_data = json.loads(chunk_value)
+                chunk_text = chunk_data.get("chunk_data", chunk_value)
+            except json.JSONDecodeError:
+                chunk_text = chunk_value
+        elif isinstance(chunk_value, dict):
+            chunk_text = chunk_value.get("chunk_data", str(chunk_value))
+        else:
+            chunk_text = str(chunk_value)
+
+        if not chunk_text or not chunk_text.strip():
+            continue
+
+        cursor.execute(f"""
             INSERT INTO document_chunks (source_table, source_id, chunk_seq, chunk_text, embedding)
             VALUES (
                 :source_table,
                 :source_id,
                 :chunk_seq,
                 :chunk_text,
-                VECTOR_EMBEDDING(:model_name USING :chunk_text AS data)
+                VECTOR_EMBEDDING({EMBEDDING_MODEL} USING :chunk_text AS data)
             )
         """, {
             "source_table": source_table,
             "source_id": source_id,
             "chunk_seq": idx,
             "chunk_text": chunk_text,
-            "model_name": EMBEDDING_MODEL
         })
         chunk_count += 1
 
@@ -294,7 +332,8 @@ def main():
         count = cursor.fetchone()[0]
         print(f"  {table:30s} {count:>6d} rows")
 
-    if cursor.execute("SELECT COUNT(*) FROM maintenance_logs").fetchone()[0] == 0:
+    cursor.execute("SELECT COUNT(*) FROM maintenance_logs")
+    if cursor.fetchone()[0] == 0:
         print("\nERROR: No source data found. Run prism-seed.py first.")
         cursor.close()
         conn.close()
