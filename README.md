@@ -2,7 +2,7 @@
 
 **Companion app for the data fundamentals presentation series**
 
-**Version:** 1.2.1
+**Version:** 1.2.2
 **Author:** Kirk Kirkconnell (Oracle Developer Relations)
 **Last Updated:** March 9, 2026
 
@@ -625,7 +625,7 @@ Run `prism-setup.sql` against the ADB instance. This script:
 
 1. Creates the PRISM application user and grants required privileges.
 2. Creates all canonical tables (DISTRICTS, INFRASTRUCTURE_ASSETS, OPERATIONAL_PROCEDURES, MAINTENANCE_LOGS, INSPECTION_REPORTS, INSPECTION_FINDINGS, ASSET_CONNECTIONS, DOCUMENT_CHUNKS).
-3. Loads the ONNX embedding model (DEMO_MODEL) into the database.
+3. Loads the [ONNX embedding model](https://adwc4pm.objectstorage.us-ashburn-1.oci.customer-oci.com/p/TtH6hL2y25EypZ0-rrczRZ1aXp7v1ONbRBfCiT-BDBN8WLKQ3lgyW6RxCfIFLdA6/n/adwc4pm/b/OML-ai-models/o/all_MiniLM_L12_v2_augmented.zip) (DEMO_MODEL) into the database.
 4. Creates the JSON Duality View (INSPECTION_REPORT_DV).
 5. Creates the SQL/PGQ property graph (CITYPULSE_GRAPH).
 
