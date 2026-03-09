@@ -1,6 +1,6 @@
-# Prism: Design Document
+# Prism: Design document
 
-**Companion App for the Data Fundamentals Presentation Series**
+**Companion app for the data fundamentals presentation series**
 
 **Version:** 1.2.1
 **Author:** Kirk Kirkconnell (Oracle Developer Relations)
@@ -8,7 +8,7 @@
 
 ---
 
-## 1. Purpose and Vision
+## 1. Purpose and vision
 
 Prism is a developer-facing web application that brings the concepts from the Data Fundamentals presentation series to life. Where the presentation tells, Prism shows: developers interact with a single canonical dataset stored in Oracle AI Database 26ai and see that same data projected as relational rows, JSON documents, graph relationships, and vector embeddings, all without data duplication or synchronization overhead.
 
@@ -19,21 +19,21 @@ The application serves two complementary purposes:
 
 In subsequent labs, developers will build on this application to add features and data.
 
-### 1.1 Core Thesis
+### 1.1 Core thesis
 
 Prism exists to show one idea: **data stored once in canonical form can efficiently be projected into whatever shape your consumers need**. This is the Unified Model Theory in action. Prism is the anti-polyglot-persistence argument made interactive.
 
 ---
 
-## 2. Target Audience
+## 2. Target audience
 
 Application developers, especially those who might already have used the Oracle platform but may be unaware of newer developer capabilities since around Oracle 12c. These developers have mixed AI experience levels, ranging from "I've heard of vector search" to "I've built RAG pipelines and more." Prism meets them wherever they are via its dual-mode interface.
 
 ---
 
-## 3. Architecture Overview
+## 3. Architecture overview
 
-### 3.1 Technology Stack
+### 3.1 Technology stack
 
 | Layer        | Technology                                    |
 |--------------|-----------------------------------------------|
@@ -47,7 +47,7 @@ Application developers, especially those who might already have used the Oracle 
 | Auth         | Basic authentication (username/password)       |
 | Deployment   | OCI (hosted) or local dev against own ADB      |
 
-### 3.2 High-Level Architecture
+### 3.2 High-level architecture
 
 ```
 ┌──────────────────────────────────────────────────┐
@@ -95,7 +95,7 @@ Prism uses HTTP Basic Authentication on all API endpoints. Credentials are confi
 
 The React frontend stores the credentials in session state after a login prompt on first access. All subsequent API calls include the `Authorization` header.
 
-### 3.4 The `/api/meta/*` Endpoints
+### 3.4 The `/api/meta/*` endpoints
 
 These endpoints exist specifically to power Learn Mode. They return:
 
@@ -107,15 +107,15 @@ By separating this into its own API surface, the frontend can cleanly toggle bet
 
 ---
 
-## 4. The CityPulse Dataset (Curated Subset)
+## 4. The CityPulse dataset (curated subset)
 
 Prism uses a curated subset of the CityPulse smart city dataset. Each subset naturally demonstrates a specific data projection without feeling contrived.
 
-### 4.1 Canonical Layer
+### 4.1 Canonical layer
 
 This is the single source of truth. All projections derive from these tables.
 
-**Core Tables:**
+**Core tables:**
 
 - **DISTRICTS** — City districts with boundaries, population, and classification (residential, industrial, commercial, mixed-use).
 - **INFRASTRUCTURE_ASSETS** — Physical assets: Harbor Bridge, Substation Gamma, water pipelines, communication towers, etc. Each belongs to a district, has a type, status, commissioning date, and a `specifications` column stored as the JSON data type. This JSON column holds asset-type-specific technical attributes (e.g., load capacity for a bridge, voltage rating for a substation, diameter for a pipeline) that vary by asset type.
@@ -126,7 +126,7 @@ This is the single source of truth. All projections derive from these tables.
 - **ASSET_CONNECTIONS** — Junction table recording physical connectivity between infrastructure assets (which pipeline feeds which substation, which sensor monitors which bridge segment). This is the foundation for graph projection.
 - **DOCUMENT_CHUNKS** — Stores chunked text and vector embeddings for all vectorized content (maintenance log narratives, inspection report summaries, inspection finding descriptions). A polymorphic reference design allows chunks from any source table. This also allows multiple chunks to be associated with each piece of content.
 
-### 4.2 How Each Projection Maps
+### 4.2 How each projection maps
 
 | Projection     | Source Tables                                  | Projection Mechanism              | What it demonstrates                                         |
 |---------------|------------------------------------------------|-----------------------------------|--------------------------------------------------------------|
