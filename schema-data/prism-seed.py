@@ -231,6 +231,11 @@ ASSET_CONNECTIONS = [
     ("Meridian Cut Retaining Wall", "Meridian Overpass", "supports", "Retaining wall stabilizes overpass approach embankments"),
     ("Central Gas Distribution", "Substation Epsilon", "connects-to", "Gas supply for backup generation at substation"),
     ("Pipeline North-7", "Pipeline South-3", "connects-to", "Interconnection valve at distribution junction"),
+
+    # Cross-component connections (bridge the two graph clusters)
+    ("Substation Gamma", "Substation Epsilon", "powers", "132kV to 33kV step-down feed via transmission line T4-Central"),
+    ("Comms Tower Alpha", "Seismic Station CC-01", "connects-to", "Seismic data telemetry backhaul to central monitoring"),
+    ("Flood Gauge Station R1", "Riverside Pedestrian Bridge", "monitors", "River level monitoring at pedestrian bridge crossing"),
 ]
 
 OPERATIONAL_PROCEDURES = [
