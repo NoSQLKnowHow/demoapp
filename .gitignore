@@ -2,3 +2,7 @@
 /model
 *.pyc
 *__init__.py
+node_modules
+frontend/node_modules
+frontend/dist
+frontend/.env
