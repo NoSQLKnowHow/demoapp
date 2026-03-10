@@ -8,9 +8,16 @@ Endpoints:
 - Direct connections for an asset
 - N-hop neighborhood (subgraph around an asset)
 - Shortest path between two assets
+
+Implementation note: The neighborhood and shortest-path queries use
+Python-side BFS rather than recursive CTEs. Oracle's recursive WITH
+hits cycle detection errors on bidirectional graph data (A->B->A).
+The Python approach uses a visited set to handle cycles cleanly.
+The SQL/PGQ equivalents are shown in Learn Mode for teaching purposes.
 """
 
 import time
+from collections import defaultdict, deque
 from typing import Optional
 
 import oracledb
@@ -37,7 +44,7 @@ router = APIRouter(
 
 
 # ============================================================================
-# Helper: build a GraphNode from a row dict
+# Helpers
 # ============================================================================
 
 def _node_from_row(row_dict):
@@ -49,6 +56,43 @@ def _node_from_row(row_dict):
         status=row_dict.get("status"),
         district_id=row_dict.get("district_id"),
     )
+
+
+def _build_id_binds(ids):
+    """Build bind variable names and params dict for a set/list of IDs."""
+    id_list = list(ids)
+    bind_names = [f":id{i}" for i in range(len(id_list))]
+    bind_params = {f"id{i}": aid for i, aid in enumerate(id_list)}
+    return ",".join(bind_names), bind_params
+
+
+def _load_adjacency(cursor):
+    """Load the full adjacency list from asset_connections. Returns a defaultdict(set)."""
+    cursor.execute("SELECT from_asset_id, to_asset_id FROM asset_connections")
+    adj = defaultdict(set)
+    for from_id, to_id in cursor.fetchall():
+        adj[from_id].add(to_id)
+        adj[to_id].add(from_id)
+    return adj
+
+
+# ============================================================================
+# Reusable SQL fragments
+# ============================================================================
+
+NODES_FOR_IDS_SQL = """
+    SELECT asset_id, name, asset_type, status, district_id
+    FROM infrastructure_assets
+    WHERE asset_id IN ({id_list})
+"""
+
+EDGES_FOR_IDS_SQL = """
+    SELECT ac.connection_id, ac.from_asset_id, ac.to_asset_id,
+           ac.connection_type, ac.description
+    FROM asset_connections ac
+    WHERE ac.from_asset_id IN ({id_list})
+      AND ac.to_asset_id IN ({id_list})
+"""
 
 
 # ============================================================================
@@ -67,7 +111,6 @@ CONNECTIONS_SQL = """
     ORDER BY ac.connection_type, a_from.name
 """
 
-# The equivalent SQL/PGQ query (shown in Learn Mode for comparison)
 CONNECTIONS_PGQ_SQL = """
     SELECT src_id, src_name, edge_type, edge_desc, dst_id, dst_name
     FROM GRAPH_TABLE (citypulse_graph
@@ -106,7 +149,6 @@ async def get_connections(
     elapsed = (time.perf_counter() - start) * 1000
 
     if not rows:
-        # Check if the asset exists at all
         with get_cursor(conn) as cursor:
             cursor.execute("SELECT 1 FROM infrastructure_assets WHERE asset_id = :id", {"id": asset_id})
             if not cursor.fetchone():
@@ -141,34 +183,6 @@ NEIGHBORHOOD_CENTER_SQL = """
     WHERE asset_id = :asset_id
 """
 
-# For the neighborhood, we use iterative Python-side hop expansion
-# rather than recursive CTEs. Recursive CTEs hit cycle detection errors
-# on bidirectional graph data (A->B->A). The Python approach uses a
-# simple BFS with a visited set, querying one hop at a time.
-
-NEIGHBORS_FOR_IDS_SQL = """
-    SELECT DISTINCT
-        CASE WHEN ac.from_asset_id IN ({id_list}) THEN ac.to_asset_id
-             ELSE ac.from_asset_id END AS neighbor_id
-    FROM asset_connections ac
-    WHERE ac.from_asset_id IN ({id_list}) OR ac.to_asset_id IN ({id_list})
-"""
-
-NODES_FOR_IDS_SQL = """
-    SELECT asset_id, name, asset_type, status, district_id
-    FROM infrastructure_assets
-    WHERE asset_id IN ({id_list})
-"""
-
-EDGES_FOR_IDS_SQL = """
-    SELECT ac.connection_id, ac.from_asset_id, ac.to_asset_id,
-           ac.connection_type, ac.description
-    FROM asset_connections ac
-    WHERE ac.from_asset_id IN ({id_list})
-      AND ac.to_asset_id IN ({id_list})
-"""
-
-# The SQL/PGQ equivalent (shown in Learn Mode)
 NEIGHBORHOOD_PGQ_SQL = """
     -- SQL/PGQ equivalent for N-hop neighborhood:
     SELECT DISTINCT
@@ -187,17 +201,11 @@ NEIGHBORHOOD_PGQ_SQL = """
 """
 
 
-def _build_id_binds(ids):
-    """Build bind variable names and params dict for a set of IDs."""
-    bind_names = [f":id{i}" for i in range(len(ids))]
-    bind_params = {f"id{i}": aid for i, aid in enumerate(ids)}
-    return ",".join(bind_names), bind_params
-
-
-def _expand_neighborhood(cursor, start_id, hops):
+def _expand_neighborhood(adj, start_id, hops):
     """
-    BFS expansion: starting from start_id, find all asset IDs
-    reachable within 'hops' steps. Returns the set of all reachable IDs.
+    BFS expansion using an adjacency list. Starting from start_id,
+    find all asset IDs reachable within 'hops' steps.
+    Returns the set of all reachable IDs (including start_id).
     """
     visited = {start_id}
     frontier = {start_id}
@@ -205,11 +213,10 @@ def _expand_neighborhood(cursor, start_id, hops):
     for _ in range(hops):
         if not frontier:
             break
-        bind_str, bind_params = _build_id_binds(frontier)
-        sql = NEIGHBORS_FOR_IDS_SQL.format(id_list=bind_str)
-        cursor.execute(sql, bind_params)
-        neighbors = {row[0] for row in cursor.fetchall()}
-        frontier = neighbors - visited
+        next_frontier = set()
+        for node in frontier:
+            next_frontier |= adj[node]
+        frontier = next_frontier - visited
         visited |= frontier
 
     return visited
@@ -240,9 +247,11 @@ async def get_neighborhood(
 
     center = _node_from_row(dict(zip(columns, center_row)))
 
-    # BFS hop expansion to find all reachable node IDs
+    # Load adjacency and BFS expand
     with get_cursor(conn) as cursor:
-        reachable_ids = _expand_neighborhood(cursor, asset_id, hops)
+        adj = _load_adjacency(cursor)
+
+    reachable_ids = _expand_neighborhood(adj, asset_id, hops)
 
     # Fetch node details for all reachable IDs
     with get_cursor(conn) as cursor:
@@ -287,43 +296,6 @@ async def get_neighborhood(
 # Shortest Path
 # ============================================================================
 
-SHORTEST_PATH_SQL = """
-    WITH path_search(asset_id, path_ids, path_length) AS (
-        SELECT :from_id AS asset_id,
-               CAST(TO_CHAR(:from_id) AS VARCHAR2(4000)) AS path_ids,
-               0 AS path_length
-        FROM dual
-        UNION ALL
-        SELECT CASE
-            WHEN ac.from_asset_id = ps.asset_id THEN ac.to_asset_id
-            ELSE ac.from_asset_id
-        END,
-        ps.path_ids || ',' || TO_CHAR(
-            CASE
-                WHEN ac.from_asset_id = ps.asset_id THEN ac.to_asset_id
-                ELSE ac.from_asset_id
-            END
-        ),
-        ps.path_length + 1
-        FROM path_search ps
-        JOIN asset_connections ac
-            ON ac.from_asset_id = ps.asset_id OR ac.to_asset_id = ps.asset_id
-        WHERE ps.path_length < 10
-          AND INSTR(ps.path_ids, TO_CHAR(
-              CASE
-                  WHEN ac.from_asset_id = ps.asset_id THEN ac.to_asset_id
-                  ELSE ac.from_asset_id
-              END
-          )) = 0
-    )
-    CYCLE asset_id SET is_cycle TO 1 DEFAULT 0
-    SELECT path_ids, path_length
-    FROM path_search
-    WHERE asset_id = :to_id AND is_cycle = 0
-    ORDER BY path_length
-    FETCH FIRST 1 ROW ONLY
-"""
-
 SHORTEST_PATH_PGQ_SQL = """
     -- SQL/PGQ equivalent for shortest path:
     SELECT *
@@ -336,6 +308,26 @@ SHORTEST_PATH_PGQ_SQL = """
         )
     )
 """
+
+
+def _bfs_shortest_path(adj, from_id, to_id):
+    """
+    BFS shortest path using a pre-loaded adjacency list.
+    Returns a list of asset IDs forming the path, or None if no path exists.
+    """
+    visited = {from_id}
+    queue = deque([(from_id, [from_id])])
+
+    while queue:
+        node, path = queue.popleft()
+        if node == to_id:
+            return path
+        for neighbor in adj[node]:
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append((neighbor, path + [neighbor]))
+
+    return None
 
 
 @router.get("/paths", response_model=PrismResponse)
@@ -379,37 +371,30 @@ async def get_shortest_path(
             ),
         )
 
-    # Find shortest path using recursive CTE with cycle detection
+    # Load adjacency and BFS
     with get_cursor(conn) as cursor:
-        cursor.execute(SHORTEST_PATH_SQL, {"from_id": from_id, "to_id": to_id})
-        path_row = cursor.fetchone()
+        adj = _load_adjacency(cursor)
 
-    if not path_row:
+    path_ids = _bfs_shortest_path(adj, from_id, to_id)
+
+    if not path_ids:
         elapsed = (time.perf_counter() - start) * 1000
         return PrismResponse(
             data={"message": "No path found between the specified assets", "from_id": from_id, "to_id": to_id},
             meta=ResponseMeta(
-                sql=SHORTEST_PATH_SQL.strip() if learn else None,
+                sql=SHORTEST_PATH_PGQ_SQL.strip() if learn else None,
                 execution_time_ms=round(elapsed, 2),
                 operation_id="graph-shortest-path",
             ),
         )
 
-    path_ids_str, path_length = path_row
-    path_ids = [int(x) for x in path_ids_str.split(",")]
-
-    # Fetch all nodes along the path
+    # Fetch node details for the path
     with get_cursor(conn) as cursor:
-        bind_names = [f":id{i}" for i in range(len(path_ids))]
-        bind_params = {f"id{i}": pid for i, pid in enumerate(path_ids)}
-        cursor.execute(
-            f"SELECT asset_id, name, asset_type, status, district_id FROM infrastructure_assets WHERE asset_id IN ({','.join(bind_names)})",
-            bind_params
-        )
+        bind_str, bind_params = _build_id_binds(path_ids)
+        cursor.execute(NODES_FOR_IDS_SQL.format(id_list=bind_str), bind_params)
         columns = [col[0].lower() for col in cursor.description]
         all_nodes = {row[0]: dict(zip(columns, row)) for row in cursor.fetchall()}
 
-    # Build ordered node list
     nodes = [_node_from_row(all_nodes[pid]) for pid in path_ids if pid in all_nodes]
 
     # Fetch edges along the path (between consecutive nodes)
@@ -434,13 +419,14 @@ async def get_shortest_path(
     learn_sql = None
     if learn:
         learn_sql = (
-            "-- Recursive CTE with cycle detection (used):\n" +
-            SHORTEST_PATH_SQL.strip() +
-            "\n\n" + SHORTEST_PATH_PGQ_SQL.strip()
+            "-- Python-side BFS (used):\n" +
+            "-- Load all edges once, then BFS with visited set.\n" +
+            "-- Avoids recursive CTE cycle issues on bidirectional graphs.\n\n" +
+            SHORTEST_PATH_PGQ_SQL.strip()
         )
 
     return PrismResponse(
-        data=GraphPath(path_length=path_length, nodes=nodes, edges=edges),
+        data=GraphPath(path_length=len(path_ids) - 1, nodes=nodes, edges=edges),
         meta=ResponseMeta(
             sql=learn_sql,
             execution_time_ms=round(elapsed, 2),
