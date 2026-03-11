@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
 from app.database import init_pool, close_pool
-from app.routers import relational, json_views, graph
+from app.routers import relational, json_views, graph, vector, ingest, prism, meta
 
 
 @asynccontextmanager
@@ -51,10 +51,10 @@ app.add_middleware(
 app.include_router(relational.router)
 app.include_router(json_views.router)
 app.include_router(graph.router)
-# app.include_router(vector.router)
-# app.include_router(ingest.router)
-# app.include_router(prism.router)
-# app.include_router(meta.router)
+app.include_router(vector.router)
+app.include_router(ingest.router)
+app.include_router(prism.router)
+app.include_router(meta.router)
 
 
 @app.get("/health", tags=["system"])

@@ -7,7 +7,19 @@ operation ID).
 """
 
 from datetime import date, datetime
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import BeforeValidator
+
+
+def _to_date(v):
+    """Coerce datetime to date for Oracle DATE columns that include time."""
+    if isinstance(v, datetime):
+        return v.date()
+    return v
+
+
+CoerceDate = Annotated[date | None, BeforeValidator(_to_date)]
 
 from pydantic import BaseModel, Field
 
@@ -52,7 +64,7 @@ class Asset(BaseModel):
     name: str
     asset_type: str
     status: str | None = "active"
-    commissioned_date: date | None = None
+    commissioned_date: CoerceDate = None
     description: str | None = None
     specifications: dict | None = None
 
@@ -72,7 +84,7 @@ class AssetDetail(Asset):
 class MaintenanceLog(BaseModel):
     log_id: int
     asset_id: int
-    log_date: date | None = None
+    log_date: CoerceDate = None
     severity: str | None = None
     narrative: str
 
@@ -82,7 +94,7 @@ class MaintenanceLogSummary(BaseModel):
     log_id: int
     asset_id: int
     asset_name: str | None = None
-    log_date: date | None = None
+    log_date: CoerceDate = None
     severity: str | None = None
     narrative_preview: str | None = None
 
@@ -104,7 +116,7 @@ class InspectionReport(BaseModel):
     report_id: int
     asset_id: int
     inspector: str | None = None
-    inspect_date: date | None = None
+    inspect_date: CoerceDate = None
     overall_grade: str | None = None
     summary: str | None = None
 
@@ -158,7 +170,7 @@ class VectorSearchResult(BaseModel):
     similarity_score: float
     asset_name: str | None = None
     asset_id: int | None = None
-    log_date: date | None = None
+    log_date: CoerceDate = None
     severity: str | None = None
 
 

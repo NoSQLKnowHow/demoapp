@@ -141,7 +141,7 @@ CREATE TABLE maintenance_logs (
     asset_id     NUMBER NOT NULL REFERENCES infrastructure_assets(asset_id),
     log_date     DATE DEFAULT SYSDATE,
     severity     VARCHAR2(20),
-    narrative    CLOB NOT NULL
+    narrative    VARCHAR2(4000) NOT NULL
 );
 
 PROMPT         Table MAINTENANCE_LOGS created.
