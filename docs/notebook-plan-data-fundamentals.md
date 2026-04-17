@@ -2,9 +2,10 @@
 
 **Companion notebook for the Data Fundamentals presentation series**
 
-**Version:** 1.0  
-**Author:** Kirk Kirkconnell (Oracle Developer Relations)  
+**Version:** 1.1
+**Author:** Kirk Kirkconnell (Oracle Developer Relations)
 **Created:** April 16, 2026
+**Updated:** April 16, 2026
 
 ---
 
@@ -28,6 +29,13 @@ Application developers (Python, JS, Java, full-stack, AI-app builders) who may a
 | Graph syntax | SQL/PGQ GRAPH_TABLE | Native Oracle 26ai syntax |
 | Pre-loaded objects | All tables, data, duality views, property graph, unified chunks view, ONNX model | Notebook creates only the vector index and hybrid search objects |
 
+### Known constraints (discovered during testing)
+
+| Constraint | Impact | Workaround |
+|------------|--------|------------|
+| GRAPH_TABLE does not support LATERAL correlation | Cannot reference outer query variables inside a GRAPH_TABLE WHERE clause | Query all graph connections unconditionally in a CTE, then JOIN to filter |
+| Property graph KEY columns are not exposed as PROPERTIES | `asset_id` (the KEY) cannot be used in GRAPH_TABLE COLUMNS | Use `name` (which is a PROPERTY and unique) from the graph, then JOIN back to `infrastructure_assets` to resolve IDs |
+
 ---
 
 ## Section 0: Welcome and Setup (~3 minutes)
@@ -38,7 +46,7 @@ Title, objectives, prerequisites. "By the end of this notebook, you will have co
 
 ### Cell 0.2 - Markdown: Dataset context
 
-Quick context on the Prism dataset. One short paragraph: Prism uses a curated smart city dataset with seven districts, 28 infrastructure assets (bridges, substations, pipelines, sensors, communication towers, and more), maintenance logs, inspection reports, and connectivity relationships between assets. All stored in one Oracle database, projected as relational rows, JSON documents, graph relationships, and vector embeddings.
+Quick context on the Prism dataset. One short paragraph: Prism uses a curated smart city dataset with seven districts, 28 infrastructure assets (bridges, substations, pipelines, sensors, communication towers, and more), maintenance logs, inspection reports with findings, and connectivity relationships between assets. All stored in one Oracle database, projected as relational rows, JSON documents, graph relationships, and vector embeddings, with no duplication and no synchronization overhead.
 
 ### Cell 0.3 - Code: Configuration
 
@@ -82,8 +90,8 @@ Query `infrastructure_assets` to show the `specifications` JSON column for bridg
 
 ```sql
 SELECT a.name, a.asset_type,
-       a.specifications.spanLength_m.number() AS span_length,
-       a.specifications.loadCapacity_t.number() AS load_capacity,
+       a.specifications.spanLength_m.number() AS span_length_m,
+       a.specifications.loadCapacity_t.number() AS load_capacity_t,
        a.specifications.material.string() AS material
 FROM infrastructure_assets a
 WHERE a.asset_type = 'bridge'
@@ -100,7 +108,7 @@ SELECT *
 FROM GRAPH_TABLE (citypulse_graph
     MATCH (a IS asset) -[c IS connected_to]-> (b IS asset)
     COLUMNS (a.name AS from_asset,
-             c.connection_type,
+             c.connection_type AS relationship,
              b.name AS to_asset)
 )
 FETCH FIRST 10 ROWS ONLY
@@ -138,32 +146,19 @@ Print the first 10 dimensions and total dimension count using `VECTOR_DIMS()`.
 
 ### Cell 2.6 - Code: Insert a new maintenance log and vectorize it
 
-Insert a new maintenance log for Harbor Bridge with a realistic narrative:
+Insert a new maintenance log for Harbor Bridge with a realistic narrative about vibration patterns, fatigue stress, and corrosion. Then manually:
 
-> "Detected unusual vibration patterns on the north support cable during routine sensor sweep. Frequency analysis suggests possible fatigue stress at the cable anchor point near the western abutment. Corrosion visible on three secondary cable clamps. Recommending detailed structural inspection within 48 hours and temporary load restriction to single-lane traffic."
+1. Chunk the narrative using `DBMS_VECTOR_CHAIN.UTL_TO_CHUNKS` with JSON params
+2. Parse the `chunk_data` field from the returned JSON objects
+3. Generate embeddings using `VECTOR_EMBEDDING(DEMO_MODEL USING :chunk_text AS data)` inline in the INSERT
+4. Insert each chunk + vector into `DOCUMENT_CHUNKS`
+5. Commit
 
-Then manually:
-
-1. Chunk the narrative using `VECTOR_CHUNKS`
-2. Generate embeddings using `VECTOR_EMBEDDING(DEMO_MODEL ...)`
-3. Insert each chunk + vector into `DOCUMENT_CHUNKS`
-4. Commit
-
-This is the explicit step-by-step pipeline.
+This matches the exact pipeline used in `prism-ingest.py`.
 
 ### Cell 2.7 - Code: Verify the new chunks
 
-Query `DOCUMENT_CHUNKS` joined back for the new log_id:
-
-```sql
-SELECT dc.chunk_id, dc.chunk_seq,
-       SUBSTR(dc.chunk_text, 1, 100) AS chunk_preview,
-       VECTOR_DIMS(dc.embedding) AS dimensions
-FROM document_chunks dc
-WHERE dc.source_table = 'maintenance_logs'
-  AND dc.source_id = :new_log_id
-ORDER BY dc.chunk_seq
-```
+Query `DOCUMENT_CHUNKS` for the new log_id showing chunk_id, chunk_seq, chunk_text preview, and dimension count.
 
 ---
 
@@ -197,20 +192,7 @@ Query `USER_INDEXES` for the new vector index, showing name, index_type, and sta
 
 ### Cell 4.2 - Code: Vector search (Query 1)
 
-Vector search using the pre-loaded unified view (`v_chunks_unified`):
-
-```sql
-SELECT chunk_id, source_table,
-       SUBSTR(chunk_text, 1, 120) AS chunk_preview,
-       asset_name, district_name,
-       VECTOR_DISTANCE(embedding,
-           VECTOR_EMBEDDING(DEMO_MODEL USING
-               'structural damage and corrosion on Harbor Bridge' AS data),
-           COSINE) AS distance
-FROM v_chunks_unified
-ORDER BY distance
-FETCH FIRST 5 ROWS ONLY
-```
+Vector search using the pre-loaded unified view (`v_chunks_unified`), searching for "structural damage and corrosion on Harbor Bridge". Shows source_table, chunk preview, asset_name, district_name, and cosine distance.
 
 ### Cell 4.3 - Markdown: Interpreting results
 
@@ -239,13 +221,13 @@ Walk through the four projections, step by step:
 
 ### Cell 5.3 - Code: Unified query (table output)
 
-A CTE-based query targeting: "What maintenance issues have affected Harbor Bridge and what is its structural condition?"
+A CTE-based query targeting: "maintenance issues and structural condition of Harbor Bridge"
 
 Structure:
 
 - CTE 1 (`vector_hits`): `VECTOR_DISTANCE` + `VECTOR_EMBEDDING` for semantic search on `v_chunks_unified`
-- CTE 2 (`connected_assets`): `GRAPH_TABLE(citypulse_graph ...)` to find assets connected to Harbor Bridge (sensors monitoring it, substations powering it, seawall supporting it)
-- Final SELECT: joins `vector_hits` to `infrastructure_assets` and `districts`, uses JSON dot notation on `specifications` (span length, load capacity, material), includes connected asset names from the graph CTE
+- CTE 2 (`connected`): `GRAPH_TABLE(citypulse_graph ...)` with a literal `WHERE a.name = 'Harbor Bridge'` to find connected assets
+- Final SELECT: joins `vector_hits` to `infrastructure_assets` and `districts`, uses JSON dot notation on `specifications` (span length, load capacity, material), includes connected asset names via LISTAGG from the graph CTE
 
 Display results as a table.
 
@@ -261,15 +243,17 @@ The same unified query wrapped with `JSON_OBJECT` / `JSON_ARRAYAGG` and formatte
 
 Second unified query from a different angle: "Which assets are connected to assets that had recent critical-severity incidents, and what do their latest inspection records show?"
 
-This query:
+**Important: This query cannot use LATERAL + GRAPH_TABLE correlation.** Oracle's GRAPH_TABLE does not allow references to outer query variables. Additionally, KEY columns (like `asset_id`) are not exposed as PROPERTIES in the graph.
 
-- Starts from `maintenance_logs` filtered to `severity = 'critical'` in the last year
-- Uses `GRAPH_TABLE` to traverse outward from those assets to find connected/dependent assets
-- Joins to `inspection_reports` and `inspection_findings` for the connected assets' latest inspections
-- Extracts JSON specs from the connected assets
-- Runs a vector search for semantically related content across the connected assets
+The working approach:
 
-This shows graph traversal driving discovery (rather than just supplementing a known-asset lookup like Cell 5.3).
+- CTE 1 (`critical_assets`): JOINs `maintenance_logs` to `infrastructure_assets` to get asset **names** (not IDs) for critical-severity logs
+- CTE 2 (`all_connections`): Queries the full `GRAPH_TABLE` unconditionally, returning from_asset, to_asset, connection_type, and to_type using **name** properties only
+- CTE 3 (`impacted`): JOINs `all_connections` to `critical_assets` on `asset_name = from_asset` to filter
+- CTE 4 (`latest_inspections`): ROW_NUMBER window to get each asset's most recent inspection
+- Final SELECT: JOINs `impacted` to `infrastructure_assets` on `ia.name = imp.to_asset` to resolve back to relational data, extracts JSON specs, includes latest inspection grade and summary
+
+This shows graph traversal driving discovery rather than supplementing a known-asset lookup.
 
 ---
 
@@ -281,73 +265,67 @@ Clearly marked: **"OPTIONAL SECTION: Hybrid Vector Search (+15 minutes)"**. "If 
 
 ### Cell 6.2 - Markdown: The problem hybrid search solves
 
-Vector search excels at semantic similarity but can miss exact matches on asset identifiers, codes, or specific terminology. Lexical search nails exact matches but misses semantically related content. Hybrid search combines both and fuses the scores.
+Vector search excels at semantic similarity but can miss exact matches on asset identifiers, codes, or specific terminology. Lexical search nails exact matches but misses semantically related content that uses different wording.
 
 Example: "What safety incidents involved Substation Gamma and what were the root causes?" needs semantic understanding of "root causes" AND exact matching on "Substation Gamma."
 
 ### Cell 6.3 - Code: Create dedicated hybrid search table
 
-Create a separate table to keep the hybrid demo clean and avoid duplication with the existing `document_chunks` table:
+Create a separate table (`hybrid_search_demo`) to keep the hybrid demo clean. Populate it from `maintenance_logs` (narrative) and `inspection_findings` (description), joining through to get `asset_name` and `severity`.
 
-```sql
-CREATE TABLE hybrid_search_demo (
-    doc_id      NUMBER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    asset_name  VARCHAR2(200),
-    severity    VARCHAR2(20),
-    source_type VARCHAR2(50),
-    content     CLOB NOT NULL
-)
-```
+### Cell 6.4 - Code: Create vectorizer preference and hybrid index
 
-Then populate it by selecting combined content from `maintenance_logs` (narrative) and `inspection_findings` (description), joining through to get `asset_name` and `severity`, inserting into the `content` column.
+Create vectorizer preference using `DBMS_VECTOR_CHAIN.CREATE_PREFERENCE` with HNSW, DEMO_MODEL, word-based chunking. Then create the hybrid vector index on the content column.
 
-### Cell 6.4 - Code: Create vectorizer preference
-
-```sql
-BEGIN
-    DBMS_VECTOR_CHAIN.CREATE_PREFERENCE(
-        'prism_hybrid_pref',
-        DBMS_VECTOR_CHAIN.VECTORIZER,
-        JSON('{
-            "vector_idxtype": "hnsw",
-            "model": "DEMO_MODEL",
-            "by": "words",
-            "max": 100,
-            "overlap": 10,
-            "split": "recursively"
-        }')
-    );
-END;
-```
-
-### Cell 6.5 - Code: Create the Hybrid Vector Index
-
-```sql
-CREATE HYBRID VECTOR INDEX idx_hybrid_demo
-    ON hybrid_search_demo(content)
-    PARAMETERS('VECTORIZER prism_hybrid_pref')
-    PARALLEL 2
-```
-
-### Cell 6.6 - Code: Pure vector-only search
+### Cell 6.5 - Code: Pure vector-only search
 
 `DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "VECTOR_ONLY"`. Search text: "root cause analysis of electrical failures". Show top 5 results with vector_score.
 
-### Cell 6.7 - Code: Pure text-only search
+### Cell 6.6 - Code: Pure text-only search
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "TEXT_ONLY"`. CONTAINS clause targeting "Substation Gamma". Show results with text_score.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "TEXT_ONLY"`. CONTAINS clause targeting "Substation AND Gamma". Show results with text_score.
 
-### Cell 6.8 - Code: Full hybrid search
+### Cell 6.7 - Code: Full hybrid search (UNION)
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"` and `"search_scorer": "rsf"`. Combines the semantic query "root cause analysis of electrical failures" with the keyword query `$Substation AND $Gamma`. Display results showing score, vector_score, and text_score side by side.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"` and `"search_scorer": "rsf"`. Combines the semantic query with the keyword query. Display results showing score, vector_score, and text_score side by side.
 
-### Cell 6.9 - Markdown: Interpreting the comparison
+### Cell 6.8 - Markdown: Why is text_score always 0?
 
-Vector-only found semantically relevant electrical failure content but may have included results from the wrong assets. Text-only found documents mentioning "Substation Gamma" by name but missed semantically related content that used different wording. Hybrid found the union of both, scored and ranked appropriately.
+Teachable moment explaining UNION fusion behavior:
 
-### Cell 6.10 - Code: Cleanup
+- With UNION, the result set includes rows from *either* search. The top 5 by combined score come purely from the vector side because the semantic query scores high. Those rows don't contain "Substation" and "Gamma", so their text_score is 0.
+- The difference between `score` and `vector_score` is due to RSF normalization. `vector_score` is raw semantic similarity; `score` is the normalized, fused result.
+- The fix: use `INTERSECT` fusion, which only returns rows appearing in **both** searches.
 
-Drop the `hybrid_search_demo` table, index, and vectorizer preference so the environment is clean for the next attendee (or note that the LiveLabs environment resets).
+### Cell 6.9 - Code: Hybrid search with INTERSECT fusion
+
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "INTERSECT"` and `"search_scorer": "rsf"`. Same semantic and keyword queries. Now every result has non-zero values for both `text_score` and `vector_score`.
+
+### Cell 6.10 - Markdown: Tuning the balance
+
+Transition explaining that every row now has both scores, then introducing `score_weight` as a tuning knob. RSF lets you control how much influence each search type has on the final score. Increasing the text weight tells Oracle to favor results where the keyword match is strong.
+
+### Cell 6.11 - Code: Hybrid search with heavier text weighting
+
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"`, text `score_weight: 5` (vs vector `score_weight: 1`), and `"contains": "Substation OR Gamma"` (OR instead of AND to cast a wider net). Results containing "Substation" or "Gamma" get a significant scoring boost, shifting which results rise to the top.
+
+### Cell 6.12 - Markdown: Weighting explanation
+
+With `score_weight` set to 5 on the text side, keyword-matching results get a significant boost. Compare `text_score` and `vector_score` columns to see how weighting shifts the ranking. This is a tunable parameter, not a code change.
+
+### Cell 6.13 - Markdown: Interpreting the comparison
+
+- **Vector-only** found semantically relevant electrical failure content, but may have included results from other assets entirely.
+- **Text-only** found documents mentioning "Substation Gamma" by name, but missed semantically related content that used different wording.
+- **Hybrid (UNION)** showed that with equal weights, vector results dominate the top-K and text_score is 0.
+- **Hybrid (INTERSECT)** returned only results matching both searches, with non-zero scores on both sides.
+- **Hybrid (weighted text)** demonstrated that score_weight is a tunable dial that shifts which results rise to the top.
+
+### Cell 6.14 - Markdown: Cleanup header
+
+### Cell 6.15 - Code: Cleanup
+
+Drop the `hybrid_search_demo` table, index, and vectorizer preference.
 
 ---
 
@@ -385,7 +363,7 @@ Close the database connection cleanly.
 | DISTRICTS | City districts | district_id, name, classification, population |
 | INFRASTRUCTURE_ASSETS | Physical assets | asset_id, district_id, name, asset_type, status, specifications (JSON) |
 | OPERATIONAL_PROCEDURES | JSON collection table | Native JSON documents (SOPs, playbooks) |
-| MAINTENANCE_LOGS | Free-text incident reports | log_id, asset_id, severity, narrative (CLOB) |
+| MAINTENANCE_LOGS | Free-text incident reports | log_id, asset_id, severity, narrative (VARCHAR2) |
 | INSPECTION_REPORTS | Structured inspections | report_id, asset_id, inspector, overall_grade, summary |
 | INSPECTION_FINDINGS | Individual findings | finding_id, report_id, category, severity, description |
 | ASSET_CONNECTIONS | Physical connectivity | connection_id, from_asset_id, to_asset_id, connection_type |
@@ -399,6 +377,28 @@ Close the database connection cleanly.
 | INSPECTION_REPORT_DV | JSON Relational Duality View |
 | V_CHUNKS_UNIFIED | Unified chunks view (UNION ALL of three source-specific chunk views) |
 | DEMO_MODEL | ONNX embedding model (all-MiniLM-L12-v2) |
+
+### Property graph definition
+
+```sql
+CREATE PROPERTY GRAPH citypulse_graph
+    VERTEX TABLES (
+        infrastructure_assets
+            KEY (asset_id)
+            LABEL asset
+            PROPERTIES (name, asset_type, status, district_id)
+    )
+    EDGE TABLES (
+        asset_connections
+            KEY (connection_id)
+            SOURCE KEY (from_asset_id) REFERENCES infrastructure_assets (asset_id)
+            DESTINATION KEY (to_asset_id) REFERENCES infrastructure_assets (asset_id)
+            LABEL connected_to
+            PROPERTIES (connection_type, description)
+    );
+```
+
+**Note:** The KEY column (`asset_id`) is not included in PROPERTIES, so it cannot be referenced in GRAPH_TABLE COLUMNS clauses. Use `name` (which is unique) for correlation, then JOIN back to `infrastructure_assets` to resolve IDs.
 
 ### Sample asset names (from seed data)
 
@@ -420,7 +420,7 @@ Other: Ironworks Water Treatment Plant, Riverside Pump Station, Greenfield Boost
 - `VECTOR_EMBEDDING()` for in-database embedding generation
 - `VECTOR_DISTANCE()` with COSINE distance
 - `VECTOR_DIMS()` for dimension inspection
-- `VECTOR_CHUNKS()` for text chunking
+- `DBMS_VECTOR_CHAIN.UTL_TO_CHUNKS` for text chunking
 - `CREATE VECTOR INDEX ... ORGANIZATION INMEMORY NEIGHBOR GRAPH` (HNSW)
 - JSON dot notation on JSON data type columns
 - `JSON_OBJECT`, `JSON_ARRAYAGG`, `JSON_SERIALIZE(... PRETTY)` for JSON output
@@ -440,11 +440,29 @@ Other: Ironworks Water Treatment Plant, Riverside Pump Station, Greenfield Boost
 
 ### Hybrid search fusion modes available
 
-| Mode | Description |
-|------|-------------|
-| UNION | All unique rows from both searches |
-| INTERSECT | Only rows satisfying both searches |
-| TEXT_ONLY | Keyword search only (via hybrid index) |
-| VECTOR_ONLY | Semantic search only (via hybrid index) |
-| MINUS_TEXT | Vector results minus text results |
-| MINUS_VECTOR | Text results minus vector results |
+| Mode | Description | When to use |
+|------|-------------|-------------|
+| UNION | All unique rows from both searches | When you want broad coverage; beware that one side may dominate the top-K |
+| INTERSECT | Only rows satisfying both searches | When both keyword AND semantic relevance are required |
+| TEXT_ONLY | Keyword search only (via hybrid index) | Baseline comparison |
+| VECTOR_ONLY | Semantic search only (via hybrid index) | Baseline comparison |
+| MINUS_TEXT | Vector results minus text results | Advanced: find semantic matches that lack keyword presence |
+| MINUS_VECTOR | Text results minus vector results | Advanced: find keyword matches that lack semantic relevance |
+
+### Hybrid search tuning parameters
+
+| Parameter | Location | Effect |
+|-----------|----------|--------|
+| `score_weight` (vector) | `"vector": {"score_weight": N}` | Controls vector influence on fused score (default: 1) |
+| `score_weight` (text) | `"text": {"score_weight": N}` | Controls text influence on fused score (default: 1) |
+| `search_fusion` | Top-level | Controls how results from both searches are combined |
+| `search_scorer` | Top-level | Controls the scoring algorithm (RSF, RRF, WRRF) |
+| `contains` operator | `"text": {"contains": "..."}` | Supports AND, OR, NOT for keyword logic |
+
+### Key lesson: UNION text_score = 0
+
+When using `UNION` fusion with equal weights, the top-K results may come entirely from one search type. If the semantic query is rich, vector results dominate and all returned rows have `text_score = 0`. This is not a bug. Solutions:
+
+1. Switch to `INTERSECT` to require both searches to match
+2. Increase `score_weight` on the text side to boost keyword-matching results
+3. Use `OR` instead of `AND` in the CONTAINS clause to cast a wider keyword net
