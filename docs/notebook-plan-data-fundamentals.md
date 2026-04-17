@@ -2,10 +2,10 @@
 
 **Companion notebook for the Data Fundamentals presentation series**
 
-**Version:** 1.1
+**Version:** 1.1.1
 **Author:** Kirk Kirkconnell (Oracle Developer Relations)
 **Created:** April 16, 2026
-**Updated:** April 16, 2026
+**Updated:** April 17, 2026
 
 ---
 
@@ -62,7 +62,10 @@ ONNX_MODEL  = "DEMO_MODEL"
 
 ### Cell 0.4 - Code: Install and import dependencies
 
-`oracledb` (thin mode), `IPython.display` for formatting. Short and minimal.
+`oracledb` (thin mode), `json`, `IPython.display` for formatting, `networkx` + `matplotlib` for graph visualization. Also defines two helper functions:
+
+- `show_table()`: Renders query results as clean HTML tables with configurable `max_width` for column wrapping (default 80ch).
+- `show_graph()`: Visualizes network graphs from `(from_node, relationship, to_node)` tuples using networkx + matplotlib. Supports node coloring by asset type and optional highlighting of specific nodes (used for critical-incident assets). Renders inline as a static PNG.
 
 ### Cell 0.5 - Code: Connect to the database
 
@@ -114,6 +117,10 @@ FROM GRAPH_TABLE (citypulse_graph
 FETCH FIRST 10 ROWS ONLY
 ```
 
+### Cell 1.6 - Code: Visualize the connectivity graph
+
+Queries ALL graph connections (not the first-10 subset from the table above), fetches asset types from `infrastructure_assets` for node coloring, and renders the full Prism infrastructure connectivity graph using the `show_graph` helper. Nodes colored by asset type with a legend.
+
 ---
 
 ## Section 2: Vector Embeddings with an ONNX Model (~8 minutes)
@@ -146,7 +153,9 @@ Print the first 10 dimensions and total dimension count using `VECTOR_DIMS()`.
 
 ### Cell 2.6 - Code: Insert a new maintenance log and vectorize it
 
-Insert a new maintenance log for Harbor Bridge with a realistic narrative about vibration patterns, fatigue stress, and corrosion. Then manually:
+Insert a new maintenance log for Harbor Bridge with a realistic narrative about vibration patterns, fatigue stress, and corrosion. **Before inserting, cleans up any previous runs** by deleting document_chunks and maintenance_logs matching the lab narrative (identified by the phrase "north support cable" + Harbor Bridge asset_id). This prevents duplicate rows from skewing vector search results on re-runs.
+
+Then manually:
 
 1. Chunk the narrative using `DBMS_VECTOR_CHAIN.UTL_TO_CHUNKS` with JSON params
 2. Parse the `chunk_data` field from the returned JSON objects
@@ -170,6 +179,8 @@ HNSW (Hierarchical Navigable Small Worlds) is the recommended default vector ind
 
 ### Cell 3.2 - Code: Create the HNSW vector index
 
+**Checks `USER_INDEXES` first and drops the index if it already exists** (safe for re-runs). Then creates:
+
 ```sql
 CREATE VECTOR INDEX idx_chunk_embedding
     ON document_chunks(embedding)
@@ -192,7 +203,7 @@ Query `USER_INDEXES` for the new vector index, showing name, index_type, and sta
 
 ### Cell 4.2 - Code: Vector search (Query 1)
 
-Vector search using the pre-loaded unified view (`v_chunks_unified`), searching for "structural damage and corrosion on Harbor Bridge". Shows source_table, chunk preview, asset_name, district_name, and cosine distance.
+Vector search using the pre-loaded unified view (`v_chunks_unified`), searching for "structural damage and corrosion on Harbor Bridge". Shows source_table, chunk preview (up to 240 characters, line-wrapped via `show_table` max-width), asset_name, district_name, and cosine distance.
 
 ### Cell 4.3 - Markdown: Interpreting results
 
@@ -233,7 +244,7 @@ Display results as a table.
 
 ### Cell 5.4 - Code: Unified query (JSON output)
 
-The same unified query wrapped with `JSON_OBJECT` / `JSON_ARRAYAGG` and formatted with `JSON_SERIALIZE(... PRETTY)` to output results as a structured JSON document. Demonstrates Oracle projecting the same relational + graph + vector results as JSON.
+The same unified query but returning native JSON using `JSON_OBJECT(... RETURNING JSON)`. No `JSON_SERIALIZE` wrapper, no CLOBs. Oracle returns the JSON type directly, `python-oracledb` receives it as a Python dict, and `json.dumps(result, indent=2)` handles the pretty-printing. Demonstrates Oracle projecting the same relational + graph + vector results as structured JSON.
 
 ### Cell 5.5 - Markdown: Recap
 
@@ -255,6 +266,10 @@ The working approach:
 
 This shows graph traversal driving discovery rather than supplementing a known-asset lookup.
 
+### Cell 5.7 - Code: Visualize the impact graph
+
+Reuses the `rows` variable from Cell 5.6. Extracts critical asset names for red highlighting, builds the node type map from result columns (`connected_asset` -> `asset_type`), looks up types for critical assets via a follow-up query to `infrastructure_assets`. Renders the subgraph of critical-incident assets and their connected neighbors using `show_graph`, with critical assets highlighted in red. Gracefully handles the no-results case.
+
 ---
 
 ## Section 6 (Optional): Hybrid Vector Search (+15 minutes)
@@ -271,23 +286,25 @@ Example: "What safety incidents involved Substation Gamma and what were the root
 
 ### Cell 6.3 - Code: Create dedicated hybrid search table
 
-Create a separate table (`hybrid_search_demo`) to keep the hybrid demo clean. Populate it from `maintenance_logs` (narrative) and `inspection_findings` (description), joining through to get `asset_name` and `severity`.
+**Starts with defensive cleanup** (drops index, table, and vectorizer preference if they exist from prior runs, using try/except to handle the "does not exist" case silently). Then creates a separate table (`hybrid_search_demo`) and populates it from `maintenance_logs` (narrative) and `inspection_findings` (description), joining through to get `asset_name` and `severity`.
 
 ### Cell 6.4 - Code: Create vectorizer preference and hybrid index
 
-Create vectorizer preference using `DBMS_VECTOR_CHAIN.CREATE_PREFERENCE` with HNSW, DEMO_MODEL, word-based chunking. Then create the hybrid vector index on the content column.
+Create vectorizer preference using `DBMS_VECTOR_CHAIN.CREATE_PREFERENCE` with HNSW, DEMO_MODEL, word-based chunking. Then create the hybrid vector index on the content column. **Prints a warning** about MAINTENANCE AUTO: the hybrid index chunks, embeds, and indexes all rows in the background after creation. The first search query may take 30-60 seconds while this completes.
 
 ### Cell 6.5 - Code: Pure vector-only search
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "VECTOR_ONLY"`. Search text: "root cause analysis of electrical failures". Show top 5 results with vector_score.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "VECTOR_ONLY"`. Search text: "root cause analysis of electrical failures". Returns JSON natively (no `JSON_SERIALIZE` wrapper needed). `python-oracledb` receives a Python dict; `json.dumps(result, indent=2)` handles pretty-printing. Show top 5 results with vector_score.
+
+> **Markdown note before this cell:** Blockquote callout warning that the first query after index creation may take 30-60 seconds.
 
 ### Cell 6.6 - Code: Pure text-only search
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "TEXT_ONLY"`. CONTAINS clause targeting "Substation AND Gamma". Show results with text_score.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "TEXT_ONLY"`. CONTAINS clause targeting "Substation AND Gamma". Same native JSON return pattern. Show results with text_score.
 
 ### Cell 6.7 - Code: Full hybrid search (UNION)
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"` and `"search_scorer": "rsf"`. Combines the semantic query with the keyword query. Display results showing score, vector_score, and text_score side by side.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"` and `"search_scorer": "rsf"`. Same native JSON return pattern. Display results showing score, vector_score, and text_score side by side.
 
 ### Cell 6.8 - Markdown: Why is text_score always 0?
 
@@ -299,7 +316,7 @@ Teachable moment explaining UNION fusion behavior:
 
 ### Cell 6.9 - Code: Hybrid search with INTERSECT fusion
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "INTERSECT"` and `"search_scorer": "rsf"`. Same semantic and keyword queries. Now every result has non-zero values for both `text_score` and `vector_score`.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "INTERSECT"` and `"search_scorer": "rsf"`. Same native JSON return pattern. Now every result has non-zero values for both `text_score` and `vector_score`.
 
 ### Cell 6.10 - Markdown: Tuning the balance
 
@@ -307,7 +324,7 @@ Transition explaining that every row now has both scores, then introducing `scor
 
 ### Cell 6.11 - Code: Hybrid search with heavier text weighting
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"`, text `score_weight: 5` (vs vector `score_weight: 1`), and `"contains": "Substation OR Gamma"` (OR instead of AND to cast a wider net). Results containing "Substation" or "Gamma" get a significant scoring boost, shifting which results rise to the top.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"`, text `score_weight: 5` (vs vector `score_weight: 1`), and `"contains": "Substation OR Gamma"` (OR instead of AND to cast a wider net). Same native JSON return pattern. Results containing "Substation" or "Gamma" get a significant scoring boost, shifting which results rise to the top.
 
 ### Cell 6.12 - Markdown: Weighting explanation
 
@@ -423,12 +440,31 @@ Other: Ironworks Water Treatment Plant, Riverside Pump Station, Greenfield Boost
 - `DBMS_VECTOR_CHAIN.UTL_TO_CHUNKS` for text chunking
 - `CREATE VECTOR INDEX ... ORGANIZATION INMEMORY NEIGHBOR GRAPH` (HNSW)
 - JSON dot notation on JSON data type columns
-- `JSON_OBJECT`, `JSON_ARRAYAGG`, `JSON_SERIALIZE(... PRETTY)` for JSON output
+- `JSON_OBJECT(... RETURNING JSON)` for native JSON output (no `JSON_SERIALIZE`, no CLOBs)
+- `JSON_ARRAYAGG` for building JSON arrays from query results
 - `GRAPH_TABLE()` with SQL/PGQ pattern matching
 - `CREATE HYBRID VECTOR INDEX` with vectorizer preference
 - `DBMS_VECTOR_CHAIN.CREATE_PREFERENCE` for vectorizer configuration
-- `DBMS_HYBRID_VECTOR.SEARCH` for hybrid keyword + semantic search
+- `DBMS_HYBRID_VECTOR.SEARCH` for hybrid keyword + semantic search (returns JSON natively)
 - `FETCH FIRST N ROWS ONLY` for top-K limiting
+
+### Python dependencies
+
+| Package | Purpose |
+|---------|--------|
+| `python-oracledb` (thin mode) | Database connectivity; no Oracle Client required |
+| `networkx` | Graph data structure construction for visualization |
+| `matplotlib` | Static inline graph rendering (PNG) |
+| `json` (stdlib) | Pretty-printing native JSON values from Oracle via `json.dumps(result, indent=2)` |
+| `IPython.display` | HTML table rendering in notebook cells |
+
+### JSON approach: no CLOBs, no JSON_SERIALIZE
+
+The notebook uses Oracle's native JSON type throughout, avoiding CLOBs entirely:
+
+- **Unified query JSON output (Cell 5.4):** `JSON_OBJECT(... RETURNING JSON)` produces native JSON. `python-oracledb` returns a Python dict. `json.dumps()` handles pretty-printing.
+- **Hybrid search cells (Cells 6.5-6.11):** `DBMS_HYBRID_VECTOR.SEARCH` returns JSON natively. No wrapper needed.
+- **Why not `JSON_SERIALIZE`?** `JSON_SERIALIZE` converts JSON *to text* (VARCHAR2 or CLOB). Asking it to `RETURNING JSON` is circular and Oracle rejects it with ORA-40449. The correct approach is to let JSON-producing functions return their native type and handle formatting in Python.
 
 ### Hybrid search scoring methods available
 
