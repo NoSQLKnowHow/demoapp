@@ -2,7 +2,7 @@
 
 **Companion notebook for the Data Fundamentals presentation series**
 
-**Version:** 1.1.1
+**Version:** 1.1.2
 **Author:** Kirk Kirkconnell (Oracle Developer Relations)
 **Created:** April 16, 2026
 **Updated:** April 17, 2026
@@ -62,10 +62,13 @@ ONNX_MODEL  = "DEMO_MODEL"
 
 ### Cell 0.4 - Code: Install and import dependencies
 
-`oracledb` (thin mode), `json`, `IPython.display` for formatting, `networkx` + `matplotlib` for graph visualization. Also defines two helper functions:
+`oracledb` (thin mode), `json`, `decimal`, `IPython.display` for formatting, `networkx` + `matplotlib` for graph visualization. Also defines five helper functions:
 
 - `show_table()`: Renders query results as clean HTML tables with configurable `max_width` for column wrapping (default 80ch).
 - `show_graph()`: Visualizes network graphs from `(from_node, relationship, to_node)` tuples using networkx + matplotlib. Supports node coloring by asset type and optional highlighting of specific nodes (used for critical-incident assets). Renders inline as a static PNG.
+- `_json_default()`: Handles Oracle types that `json.dumps` doesn't know about natively. Converts `decimal.Decimal` (from Oracle NUMBER columns) to `float` so scores render as numbers in JSON output.
+- `print_json()`: Pretty-prints JSON results from Oracle. If the result arrives as a string (e.g. from `DBMS_HYBRID_VECTOR.SEARCH`), parses it first with `json.loads()`, then prints with `json.dumps(result, indent=2, default=_json_default)`.
+- `rename_fused_score()`: Renames the `score` key to `fused_score` in hybrid search result dicts. Used only in the three fused hybrid cells (UNION, INTERSECT, weighted) to make the scoring story self-documenting.
 
 ### Cell 0.5 - Code: Connect to the database
 
@@ -203,7 +206,7 @@ Query `USER_INDEXES` for the new vector index, showing name, index_type, and sta
 
 ### Cell 4.2 - Code: Vector search (Query 1)
 
-Vector search using the pre-loaded unified view (`v_chunks_unified`), searching for "structural damage and corrosion on Harbor Bridge". Shows source_table, chunk preview (up to 240 characters, line-wrapped via `show_table` max-width), asset_name, district_name, and cosine distance.
+Vector search using the pre-loaded unified view (`v_chunks_unified`), searching for "structural damage and corrosion on Harbor Bridge". Shows source_table, source_date, chunk preview (up to 240 characters, line-wrapped via `show_table` max-width), asset_name, district_name, and cosine distance.
 
 ### Cell 4.3 - Markdown: Interpreting results
 
@@ -211,7 +214,7 @@ Cosine distance closer to 0 = more semantically similar. Results are relevant ev
 
 ### Cell 4.4 - Code: Vector search (Query 2)
 
-Second vector search with different semantic territory: "equipment failures near water treatment causing environmental risk" to show results from different assets and source types.
+Second vector search with different semantic territory: "equipment failures near water treatment causing environmental risk" to show results from different assets and source types. Same columns as Query 1 including source_date.
 
 ---
 
@@ -294,29 +297,29 @@ Create vectorizer preference using `DBMS_VECTOR_CHAIN.CREATE_PREFERENCE` with HN
 
 ### Cell 6.5 - Code: Pure vector-only search
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "VECTOR_ONLY"`. Search text: "root cause analysis of electrical failures". Returns JSON natively (no `JSON_SERIALIZE` wrapper needed). `python-oracledb` receives a Python dict; `json.dumps(result, indent=2)` handles pretty-printing. Show top 5 results with vector_score.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "VECTOR_ONLY"`. Search text: "root cause analysis of electrical failures". Returns JSON natively (no `JSON_SERIALIZE` wrapper needed). `python-oracledb` receives a Python dict; `print_json(result)` handles pretty-printing. Show top 5 results with `vector_score` only (no `score` column, since there is nothing to fuse in a vector-only search).
 
 > **Markdown note before this cell:** Blockquote callout warning that the first query after index creation may take 30-60 seconds.
 
 ### Cell 6.6 - Code: Pure text-only search
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "TEXT_ONLY"`. CONTAINS clause targeting "Substation AND Gamma". Same native JSON return pattern. Show results with text_score.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "TEXT_ONLY"`. CONTAINS clause targeting "Substation AND Gamma". Same native JSON return pattern. Show results with `text_score` only (no `score` column).
 
 ### Cell 6.7 - Code: Full hybrid search (UNION)
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"` and `"search_scorer": "rsf"`. Same native JSON return pattern. Display results showing score, vector_score, and text_score side by side.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"` and `"search_scorer": "rsf"`. Same native JSON return pattern. Results include `fused_score`, `vector_score`, and `text_score` (Oracle returns `score`, which is renamed to `fused_score` via `rename_fused_score()` for clarity). Display results showing all three scores side by side.
 
 ### Cell 6.8 - Markdown: Why is text_score always 0?
 
 Teachable moment explaining UNION fusion behavior:
 
 - With UNION, the result set includes rows from *either* search. The top 5 by combined score come purely from the vector side because the semantic query scores high. Those rows don't contain "Substation" and "Gamma", so their text_score is 0.
-- The difference between `score` and `vector_score` is due to RSF normalization. `vector_score` is raw semantic similarity; `score` is the normalized, fused result.
+- The difference between `fused_score` and `vector_score` is due to RSF normalization. `vector_score` is raw semantic similarity; `fused_score` is the normalized, fused result.
 - The fix: use `INTERSECT` fusion, which only returns rows appearing in **both** searches.
 
 ### Cell 6.9 - Code: Hybrid search with INTERSECT fusion
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "INTERSECT"` and `"search_scorer": "rsf"`. Same native JSON return pattern. Now every result has non-zero values for both `text_score` and `vector_score`.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "INTERSECT"` and `"search_scorer": "rsf"`. Same native JSON return pattern with `fused_score` rename. Now every result has non-zero values for both `text_score` and `vector_score`.
 
 ### Cell 6.10 - Markdown: Tuning the balance
 
@@ -324,7 +327,7 @@ Transition explaining that every row now has both scores, then introducing `scor
 
 ### Cell 6.11 - Code: Hybrid search with heavier text weighting
 
-`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"`, text `score_weight: 5` (vs vector `score_weight: 1`), and `"contains": "Substation OR Gamma"` (OR instead of AND to cast a wider net). Same native JSON return pattern. Results containing "Substation" or "Gamma" get a significant scoring boost, shifting which results rise to the top.
+`DBMS_HYBRID_VECTOR.SEARCH` with `"search_fusion": "UNION"`, text `score_weight: 5` (vs vector `score_weight: 1`), and `"contains": "Substation OR Gamma"` (OR instead of AND to cast a wider net). Same native JSON return pattern with `fused_score` rename. Results containing "Substation" or "Gamma" get a significant scoring boost, shifting which results rise to the top.
 
 ### Cell 6.12 - Markdown: Weighting explanation
 
@@ -455,7 +458,8 @@ Other: Ironworks Water Treatment Plant, Riverside Pump Station, Greenfield Boost
 | `python-oracledb` (thin mode) | Database connectivity; no Oracle Client required |
 | `networkx` | Graph data structure construction for visualization |
 | `matplotlib` | Static inline graph rendering (PNG) |
-| `json` (stdlib) | Pretty-printing native JSON values from Oracle via `json.dumps(result, indent=2)` |
+| `json` (stdlib) | Pretty-printing native JSON values from Oracle via `print_json()` helper |
+| `decimal` (stdlib) | Type checking for Oracle NUMBER values returned as `Decimal` |
 | `IPython.display` | HTML table rendering in notebook cells |
 
 ### JSON approach: no CLOBs, no JSON_SERIALIZE
@@ -465,6 +469,10 @@ The notebook uses Oracle's native JSON type throughout, avoiding CLOBs entirely:
 - **Unified query JSON output (Cell 5.4):** `JSON_OBJECT(... RETURNING JSON)` produces native JSON. `python-oracledb` returns a Python dict. `json.dumps()` handles pretty-printing.
 - **Hybrid search cells (Cells 6.5-6.11):** `DBMS_HYBRID_VECTOR.SEARCH` returns JSON natively. No wrapper needed.
 - **Why not `JSON_SERIALIZE`?** `JSON_SERIALIZE` converts JSON *to text* (VARCHAR2 or CLOB). Asking it to `RETURNING JSON` is circular and Oracle rejects it with ORA-40449. The correct approach is to let JSON-producing functions return their native type and handle formatting in Python.
+
+### Hybrid search scoring: `fused_score` rename
+
+Oracle's `DBMS_HYBRID_VECTOR.SEARCH` returns a field called `score` alongside `vector_score` and `text_score`. In baseline cells (VECTOR_ONLY, TEXT_ONLY), the `score` field is omitted from the return values because it's redundant (identical to the single active score). In the three fused hybrid cells (UNION, INTERSECT, weighted), the `score` field is renamed to `fused_score` via `rename_fused_score()` to make the scoring story self-documenting. This way attendees immediately understand that `fused_score` is the RSF-normalized combination of `vector_score` and `text_score`.
 
 ### Hybrid search scoring methods available
 
