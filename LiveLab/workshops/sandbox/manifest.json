@@ -1,0 +1,34 @@
+{
+  "workshoptitle": "Data Fundamentals for AI Application Development",
+  "help": "livelabs-help@oracle.com",
+  "tutorials": [
+    {
+      "title": "Introduction",
+      "filename": "../../introduction/introduction.md"
+    },
+    {
+      "title": "Lab 1: Connect and Explore the Prism Dataset",
+      "description": "Configure credentials, connect to Oracle AI Database 26ai, and explore Prism data structures.",
+      "filename": "../../lab-1-connect-and-explore/lab-1-connect-and-explore.md"
+    },
+    {
+      "title": "Lab 2: Generate In-Database Vector Embeddings",
+      "description": "Run the embedding pipeline and create the HNSW vector index.",
+      "filename": "../../lab-2-vector-embeddings/lab-2-vector-embeddings.md"
+    },
+    {
+      "title": "Lab 3: Combine Relational, JSON, Graph, and Vector in One Query",
+      "description": "Execute multimodel SQL and graph traversal with semantic search context.",
+      "filename": "../../lab-3-unified-query/lab-3-unified-query.md"
+    },
+    {
+      "title": "Lab 4: Optional Hybrid Vector Search",
+      "description": "Build a hybrid index and compare vector, text, UNION, and INTERSECT modes.",
+      "filename": "../../lab-4-hybrid-search/lab-4-hybrid-search.md"
+    },
+    {
+      "title": "Need Help?",
+      "filename": "https://oracle-livelabs.github.io/common/labs/need-help/need-help-livelabs.md"
+    }
+  ]
+}
