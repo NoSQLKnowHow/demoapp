@@ -1,18 +1,19 @@
 -- ============================================================================
--- PRISM: Database Setup Script
+-- PRISM: Database Setup Script (ADB)
 -- ============================================================================
--- Run as: SYS AS SYSDBA (Oracle Free Docker) or ADMIN (on ADB)
--- Purpose: Creates the PRISM application user, schema objects, ONNX model,
---          JSON Duality View, and SQL/PGQ property graph.
+-- Run as: ADMIN (on ADB)
+-- Purpose: Creates the PRISM application user, grants privileges, and
+--          creates the public synonym for the DEMO_MODEL ONNX model.
 --
--- Instructions: Edit the DEFINE values below before running.
---               For ADB: set pdb_name to your ADB service name,
---                        set tablespace to DATA.
---               For Oracle Free Docker: defaults below should work.
+-- Usage:   Invoked by shell_script.sh, which passes &dbpassword via DEFINE
+--          before running this file. The shell script sources DBPASSWORD
+--          from variable.sh (or ~/.env) and binds it to &dbpassword.
+--
+-- Note:    This is the ADB-specific setup. The Oracle Free Docker version
+--          lives in ../free/prism-setup.sql and uses different defaults.
 -- ============================================================================
 
--- >>> EDIT THESE VALUES BEFORE RUNNING <<<
-DEFINE tablespace = DATA -- for ADB
+DEFINE tablespace = DATA
 
 SET VERIFY OFF
 
@@ -26,14 +27,12 @@ PROMPT =========================================================================
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [1/12] Switching to PDB &pdb_name and creating PRISM user...
-
-ALTER SESSION SET CONTAINER = &pdb_name;
+PROMPT [1/12] Creating PRISM user...
 
 -- Drop existing user if re-running (comment out for first-time setup)
 DROP USER IF EXISTS prism CASCADE;
 
-CREATE USER prism IDENTIFIED BY "&prism_password";
+CREATE USER prism IDENTIFIED BY "&dbpassword";
     --DEFAULT TABLESPACE &tablespace
     --TEMPORARY TABLESPACE TEMP;
 
@@ -69,6 +68,11 @@ GRANT EXECUTE ON DBMS_VECTOR_CHAIN TO prism;
 
 -- Network access for ONNX model loading (if loading from URL)
 -- GRANT EXECUTE ON DBMS_NETWORK_ACL_ADMIN TO prism;
+
+-- Grant access to the DEMO_MODEL ONNX embedding model (owned by ADMIN)
+-- and create a public synonym so PRISM (and any other user) can reference
+-- it by its bare name in VECTOR_EMBEDDING() calls.
+GRANT MINING MODEL SELECT ON ADMIN.DEMO_MODEL TO prism;
 
 CREATE OR REPLACE PUBLIC SYNONYM demo_model FOR admin.demo_model;
 
