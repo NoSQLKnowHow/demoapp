@@ -62,7 +62,7 @@ ORACLE_WALLET_DIR = os.environ.get("ORACLE_WALLET_DIR")
 
 EMBEDDING_MODEL = "DEMO_MODEL"
 
-DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data")
 JSON_INPUT_FILE = os.path.join(DATA_DIR, "document_chunks.json.gz")
 PKL_INPUT_FILE = os.path.join(DATA_DIR, "document_chunks.pkl")
 
