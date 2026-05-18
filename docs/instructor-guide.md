@@ -1,8 +1,13 @@
 # Prism Workshop Instructor Runbook
 
+**Version:** 0.2.0
+**Last Updated:** May 18, 2026
+
 This runbook supports the approved Prism workshop slide decks and the two hands-on notebooks in this repository. It is not a replacement for the approved decks.
 
 Use the slide decks for narrative, positioning, architecture explanation, and customer-facing messaging. Use this guide for delivery logistics, notebook handoffs, checkpoints, troubleshooting, reset guidance, and cut lines.
+
+**First time delivering one of these workshops?** See [First time delivering this workshop?](#first-time-delivering-this-workshop) at the bottom of this guide for a prep checklist that covers reading, dry-running, rehearsing, and deliberate failure practice.
 
 ## Approved delivery assets
 
@@ -142,6 +147,48 @@ Use reset guidance when a LiveLabs environment has already been used or when a s
 
 Before a repeated delivery, run the readiness checks in both notebooks again.
 
+## Timing budget cheat sheet
+
+When you're mid-session and the clock is moving faster than you'd like, glance here. The "where you should be" column is the most important: if the wall clock has passed a checkpoint and you're still earlier in the notebook, you're behind. The recovery column tells you what to give up to catch up.
+
+### Data Fundamentals, 60-minute slot
+
+| At wall clock... | You should be... | If you're behind, cut... | If you're ahead, add... |
+|---|---|---|---|
+| t+10 min | Wrapping Section 1 (Prism data model) | Compress Section 1 to the schema overview only; skip individual JSON and graph traversal cells | Nothing; pace is fine |
+| t+25 min | Mid Section 4 (vector search) | Skip Section 3 vector-index discussion; explain the index is pre-built | Run one extra ad-hoc vector query suggested by the audience |
+| t+40 min | Mid Section 5 (unified query) | Don't cut Section 5; this is the marquee. Cut Section 6 instead | Walk through the unified query CTE-by-CTE rather than just running it |
+| t+55 min | Wrapping (Section 7 or end of 6) | Skip Section 6 entirely; close on Section 5's unified query result | Run optional hybrid search exercises |
+
+### Data Fundamentals, 90-minute slot
+
+| At wall clock... | You should be... | If you're behind, cut... | If you're ahead, add... |
+|---|---|---|---|
+| t+15 min | End of Section 1 (Prism data model) | Compress graph traversal in Section 1 to a single cell with brief narration | Nothing; pace is fine |
+| t+30 min | End of Section 2 (embeddings) | Skip the manual embedding-generation cells; explain `DEMO_MODEL` produces vectors in-database and move on | Show what an embedding actually looks like (open the vector value) |
+| t+45 min | End of Section 4 (vector search) | Skip Section 3 vector-index discussion; explain it's pre-built | Take an audience-suggested query and run it |
+| t+65 min | Mid Section 5 (unified query) | Don't cut Section 5; cut Section 6 instead | Walk the unified query CTE-by-CTE |
+| t+80 min | Mid or end of Section 6 (hybrid search) | Skip the rest of Section 6; jump to the wrap | Run the optional Reciprocal Rank Fusion exercise |
+| t+88 min | Wrap-up | Close with the unified query result and one hybrid result side-by-side | Open up questions |
+
+### RAG-to-Agents, 90-minute slot
+
+| At wall clock... | You should be... | If you're behind, cut... | If you're ahead, add... |
+|---|---|---|---|
+| t+10 min | End of Section 0 (readiness probe) | Don't cut here; the lab depends on Section 0 passing | Briefly show what `OracleSaver.setup()` and `OracleStore.setup()` create |
+| t+22 min | End of Section 1 (grounded RAG) | Skip the no-framework version (Section 1.7); go straight to the LangChain version | Run an audience-suggested grounded question |
+| t+35 min | End of Section 2 (workflow) | Show one workflow output and skip the trace-table discussion | Walk the structured-output schema |
+| t+48 min | End of Section 4 (unified query as tool) | Skip Section 3 if necessary; mention tools only briefly and let Section 5's tool calls show what they are | Walk the unified-query CTEs |
+| t+70 min | First agent turn complete | Don't cut here; cut Section 6 instead | Walk the per-step trace in detail |
+| t+82 min | Memory follow-up turn complete | Skip Section 6 (Try it yourself); close on memory inspection | Run a third turn to show the memory accumulating |
+| t+88 min | Wrap-up | Show the long-term memory store contents and close | Open Q&A |
+
+### What this is NOT
+
+It is not a substitute for knowing the material. An instructor who hasn't run the notebook end-to-end shouldn't rely on the cheat sheet to recover; the cut decisions assume you understand what each section is for. The cheat sheet helps a prepared instructor stay on time; it doesn't rescue an unprepared one.
+
+It is not permission to rush through the marquee moments. Section 5 (unified query) in Data Fundamentals and Section 5 (the agent's first turn) in RAG-to-Agents are the payoff sections. If you have to spend extra time on these and skip an earlier or later section to make it work, that's the right trade.
+
 ## Suggested cut lines
 
 Use these when the group is behind schedule.
@@ -172,3 +219,49 @@ When something fails during a live workshop, diagnose in this order:
 - When notebook section names change, update the delivery maps and checkpoint references here.
 - When the LiveLabs environment changes, update the assumptions and troubleshooting sections.
 - Avoid adding alternate product positioning here unless it has also been approved in the slide decks.
+
+## First time delivering this workshop?
+
+Plan for 4-6 hours of focused prep, spread across at least two sittings. Most of that is reading and dry-running, not memorizing. The goal is to have already seen everything before your audience does.
+
+### Day 1: Read and dry-run (about 3 hours)
+
+Block off enough time to do this in one sitting if you can. Splitting it across days is fine; splitting it across more than two days breaks the continuity.
+
+- [ ] Read this runbook end-to-end. Yes, including the tables. The tables are how you will actually use it during delivery.
+- [ ] Read both approved slide decks straight through, including the speaker notes on each slide. The speaker notes are not a crutch; they cover each slide's topic in depth and are part of the material you are expected to know. Do not try to memorize talk-track yet. The goal here is to know the story arc.
+- [ ] Skim both companion design docs in `docs/`: `notebook-plan-rag-to-agents.md` and the data fundamentals plan. These tell you *why* each notebook is structured the way it is, which makes the talk-track come more naturally.
+- [ ] Open `notebooks/data_fundamentals_lab.ipynb` and run all cells in order against a known-good database. Watch what comes out of each cell. Do not skim.
+- [ ] Open `notebooks/rag_to_agents_lab.ipynb` and do the same. The agent's first turn will take noticeably longer than the other cells; that is normal.
+
+### Day 2: Practice and rehearse (about 2 hours)
+
+- [ ] Walk through `data_fundamentals_lab.ipynb` again, this time saying out loud what each section is doing as if learners were in front of you. If you can record yourself or do this with a colleague, even better. You will catch the cells where you do not actually know what is happening.
+- [ ] Do the same for `rag_to_agents_lab.ipynb`. Pay special attention to Section 5 (the agent loop); this is the section that benefits most from rehearsal.
+- [ ] Practice the marquee moments specifically: the unified query in Data Fundamentals (Section 5) and the agent's first turn in RAG-to-Agents (Section 5). These are the payoff sections; the rest of the workshop is setup for these.
+- [ ] Read the "Timing budget cheat sheet" and "Suggested cut lines" sections of this guide. You will not memorize them; the point is to know they exist so you can find them mid-session.
+
+### Day 2 or Day 3: Break things on purpose (about 1 hour)
+
+This is the step most new instructors skip. It is the most valuable hour of prep you will do. The goal is to see common failure modes in your own time so they are not surprises during delivery.
+
+- [ ] In `rag_to_agents_lab.ipynb`, stop Ollama (or change `OLLAMA_BASE_URL` to a bad value) and re-run the Section 0 readiness probe. Confirm the failure message is clear. Restore.
+- [ ] Change `OLLAMA_MODEL` to a model that is not installed. Re-run Section 0. Confirm the failure mode looks different from "Ollama is down."
+- [ ] In either notebook, change the database connection settings to a bad value. Confirm the readiness check stops you before you have wasted time.
+- [ ] Run `notebooks/rag_to_agents_reset.sql` and confirm the memory store goes back to empty.
+- [ ] Look at one memory item directly in the database (`SELECT * FROM store_bridge`). Get comfortable with what the framework-managed tables actually look like, so when an audience member asks "what does that table contain," you can answer.
+
+### Before your first session
+
+After the prep above, the existing "Before the workshop" checklist covers what to do in the hour before learners join. Run through it every time, including your first; it is quick once you know the materials.
+
+If something on the pre-workshop checklist surprises you, that is a signal you have not actually completed the first-time prep. Loop back rather than improvising on the day.
+
+### What to do if you are getting paged in less than 24 hours
+
+It happens. If you have less than a day before your first delivery:
+
+- Skip the "break things on purpose" step (you will learn those by hitting them live; this is suboptimal but survivable).
+- Skip rehearsing the talk-track out loud (you will wing it; lean harder on the approved deck for narrative).
+- Do NOT skip the end-to-end dry-run of both notebooks. If you have never seen the notebooks run successfully, you cannot recover when they fail in front of an audience.
+- Read the "Timing budget cheat sheet" and "Suggested cut lines" sections of this guide; you will need them.
