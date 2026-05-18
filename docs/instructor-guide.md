@@ -200,6 +200,56 @@ Use these when the group is behind schedule.
 | RAG-to-Agents is running long | Compress Section 2 workflow discussion and skip Section 6 Try it yourself. | Keep RAG retrieval, unified query, first agent turn, and memory follow-up. |
 | Ollama/model behavior is inconsistent | Use the trace and expected checkpoint explanation instead of spending too long re-running. | Keep the database grounding and tool-use explanation. |
 
+## Live recovery playbook
+
+When something goes wrong mid-session and the kernel itself is suspect, you have two questions to answer fast: (1) is the kernel actually broken, or am I debugging the wrong layer; and (2) what's the fastest path back to a known-good state without losing the audience.
+
+### Is the kernel actually wedged?
+
+Quick triage before you reach for the kernel restart:
+
+| Symptom | Likely kernel issue? | First action |
+|---|---|---|
+| A cell shows `[*]` for more than 30 seconds and shouldn't | Maybe. Could be a slow query or stuck network call | Wait 60 seconds total. If the database is on a shared environment, slow is expected for vector index creation. If it's an Ollama call, see below. |
+| Kernel interrupt (the square stop button) does nothing | Yes, kernel is wedged | Restart kernel; see recovery flow below |
+| A cell finishes but the next cell errors with `NameError` for something you just defined | Maybe. State desync from out-of-order execution | Try re-running the cell that defined the missing name first; if that also errors, restart |
+| Every cell errors with `oracledb.InterfaceError` or "connection closed" | Database connection dropped, kernel is fine | Re-run the connect cell (Section 0.6 in either notebook); skip the kernel restart |
+| Every cell errors with a confusing traceback you've never seen before | Possible kernel corruption | Read the traceback once. If it's genuinely unfamiliar, restart |
+
+**Don't restart prematurely.** A kernel restart costs you 90 seconds of recovery time minimum, and the audience watches the whole thing. Use it when you've confirmed the kernel itself is the problem, not when a cell happens to be slow.
+
+### Recovery flow: Data Fundamentals lab
+
+If you've decided the kernel is wedged, here's the fastest path back:
+
+1. **Restart the kernel** (Kernel menu → Restart).
+2. **Re-run Section 0** (cells 1 through ~9). This re-establishes the database connection and the readiness probe. About 15 seconds.
+3. **Re-run Section 1** (cells 10 through ~28). All read-only queries; safe to re-run. About 20 seconds.
+4. **Section 2: skip the data-mutation cells.** The cell that inserts a new maintenance log (cell 36 in current numbering, "Step 1: Insert a new maintenance log for Harbor Bridge") writes to the database. Re-running it adds a duplicate row. If you'd already run it before the wedge, skip it now. The cells that show what the embedding looks like are safe to re-run.
+5. **Section 3: the vector index cell** (cell 40) has a drop-if-exists block at the top, so it's idempotent. Safe to re-run, but takes ~30 seconds on a shared environment.
+6. **Continue from where you were.** Section 4 (vector search) and onward are all reads.
+
+Total recovery time: about 90 seconds plus whatever Section 3 takes. If you were already past Section 3 when the kernel wedged, your recovery is closer to 60 seconds.
+
+### Recovery flow: RAG-to-Agents lab
+
+This one is more delicate because the agent writes memory items as it runs:
+
+1. **Restart the kernel.**
+2. **Decide: do you want to keep the agent's existing memory or start fresh?** Both are valid choices.
+   - **Keep memory:** the agent's prior decisions persist; the demo continues with accumulated state. Better for "look at how this agent remembers" moments.
+   - **Start fresh:** run `notebooks/rag_to_agents_reset.sql` from a SQL client before re-running cell 58 (`.setup()`). Cleaner for repeated runs, but the audience may have seen the memory write you're now erasing.
+3. **Re-run Section 0** to re-establish connections and probe readiness. About 20 seconds.
+4. **Re-run Sections 1 through 4** (cells 13 through ~55). All read-only retrieval and query construction; safe and necessary because Section 5 depends on the tools and the unified query they reference. About 30 seconds.
+5. **Section 5: run cell 58** to rebuild `OracleStore` and `OracleSaver`. The `.setup()` calls are idempotent: existing tables are kept, missing ones are created. Safe regardless of which path you took in step 2.
+6. **The agent run cells (around cell 62 onward) are the ones to be careful with.** If you already ran the first turn before the wedge and you chose "keep memory" in step 2, re-running the first turn adds a *second* memory item for the same incident. The demo will still work, but Section 5.11's memory inspection will show duplicate notes. If that bothers you, run the reset script (step 2's "start fresh" path) before continuing.
+
+Total recovery time: about 60 seconds plus whatever the agent's first turn takes (usually 30-90 seconds depending on the model).
+
+### A note on sequence ambiguity
+
+The recovery flows above tell you which cells to skip after a wedge, but they don't tell you the full story of which cells are idempotent. A future revision of this guide will add a "Cell idempotency: what's safe to re-run" section that catalogs this for both notebooks. Until then, the rule of thumb is: read-only cells (SELECT queries, embedding inspection, retrieval display) are always safe; data-mutation cells (INSERT, agent memory writes, `run_agent()` calls) accumulate state on each run.
+
 ## Troubleshooting quick reference
 
 When something fails during a live workshop, diagnose in this order:
