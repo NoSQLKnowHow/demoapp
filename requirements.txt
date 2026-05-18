@@ -1,0 +1,51 @@
+# ============================================================================
+# Top-level requirements for the Prism demo app workshop image.
+# ============================================================================
+# This file is the union of all Python dependencies used anywhere in this
+# repository: the data-loader pipeline (schema-data/) AND the notebooks
+# (notebooks/). Use this to build the workshop image.
+#
+# Smaller-scoped manifest:
+#   - schema-data/requirements.txt: just the data-loader pipeline runtime.
+#     If you only need to run prism-seed.py / prism-ingest.py / the chunks
+#     export/import scripts, install from that file instead.
+#
+# Pinning policy: exact versions. The langchain / langgraph ecosystem
+# changes API surface frequently (langgraph 1.0 was a breaking release in
+# late 2025). Pin and bump deliberately; do not let pip resolve to "latest"
+# at image build time.
+# ============================================================================
+
+# --- Oracle Database driver (shared by everything) -------------------------
+oracledb==4.0.0
+cffi==2.0.0
+cryptography==48.0.0
+pycparser==3.0
+
+# --- Environment + config (data-loader pipeline) ---------------------------
+dotenv==0.9.9
+python-dotenv==1.2.2
+typing_extensions==4.15.0
+
+# --- LangChain core + integrations (notebook only) -------------------------
+# These are the highest-churn pins in this file. Test the notebook end-to-end
+# after bumping any of them.
+langchain==1.0.7
+langchain-core==1.0.3
+langchain-community==0.4.1
+langchain-ollama==1.0.0
+
+# --- LangGraph + Oracle persistence (notebook only) ------------------------
+langgraph==1.1.10
+langgraph-oracledb==1.0.1
+
+# --- LLM client utility (notebook only) ------------------------------------
+pydantic==2.10.6
+
+# --- HTTP client (notebook section 0.8 Ollama smoke test) ------------------
+requests==2.32.5
+
+# --- Notebook UI + data viz (notebooks only) -------------------------------
+ipython==8.30.0
+matplotlib==3.10.0
+networkx==3.4.2
