@@ -51,7 +51,8 @@ The notebooks include readiness checks, but those checks are intended to confirm
 Use this checklist before learners join.
 
 - Confirm the approved slide decks are the current reviewed versions.
-- Open both notebooks in the target LiveLabs environment.
+- Confirm the LiveLabs event ID is for this event and works as it should
+- Open both notebooks in the target LiveLabs environment using the event ID.
 - Run the Data Fundamentals readiness check.
 - Run the RAG-to-Agents Oracle readiness probe.
 - Confirm Ollama responds in the RAG-to-Agents notebook.
