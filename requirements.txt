@@ -1,5 +1,5 @@
 # ============================================================================
-# Top-level requirements for the Prism demo app workshop image.
+# Top-level requirements for the Prism demo workshop image.
 # ============================================================================
 # This file is the union of all Python dependencies used anywhere in this
 # repository: the data-loader pipeline (schema-data/) AND the notebooks
