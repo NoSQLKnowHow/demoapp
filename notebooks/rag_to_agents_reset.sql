@@ -4,7 +4,7 @@
 -- Run as: PRISM user
 --
 -- Example:
---   sqlplus prism/<password>@localhost:1521/FREEPDB1 @docs/rag_to_agents_reset.sql
+--   sqlplus prism/<password>@localhost:1521/FREEPDB1 @notebooks/rag_to_agents_reset.sql
 --
 -- Purpose:
 --   The agent's remember(...) tool inserts an item into the OracleStore

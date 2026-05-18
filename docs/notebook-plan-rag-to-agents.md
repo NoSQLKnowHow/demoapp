@@ -228,7 +228,7 @@ The gain was deemed larger than the loss. Section 5.11's inspection now uses `st
 
 **Schema management changes.**
 
-- `docs/rag_to_agents_prep.sql` was originally creating `AGENT_MEMORY` plus the optional hybrid vector index. With `OracleStore` owning long-term memory and `OracleSaver` owning checkpoints, both call `.setup()` from the notebook to create their tables idempotently. The prep script was slimmed to *only* the optional hybrid vector index on `DOCUMENT_CHUNKS`.
+- `notebooks/rag_to_agents_prep.sql` was originally creating `AGENT_MEMORY` plus the optional hybrid vector index. With `OracleStore` owning long-term memory and `OracleSaver` owning checkpoints, both call `.setup()` from the notebook to create their tables idempotently. The prep script was slimmed to *only* the optional hybrid vector index on `DOCUMENT_CHUNKS`.
 - The prep script also moved from `docs/` to `notebooks/` to keep SQL co-located with the notebook that uses it.
 - A new `notebooks/rag_to_agents_reset.sql` was added to wipe both memory surfaces between runs; this replaces the original guidance to truncate `AGENT_MEMORY` manually.
 
@@ -237,7 +237,7 @@ The gain was deemed larger than the loss. Section 5.11's inspection now uses `st
 - `langgraph-oracledb==1.0.1`: the new memory persistence layer.
 - `langchain-community==0.4.1`: provides `OracleEmbeddings` which `OracleStore` uses to embed memory items in-database on write.
 
-**Path corrections.** All references to `docs/rag_to_agents_lab.ipynb` and `docs/rag_to_agents_prep.sql` were corrected to `notebooks/rag_to_agents_lab.ipynb` and `notebooks/rag_to_agents_prep.sql`.
+**Path corrections.** Older doc-directory references for the RAG notebook and prep script have been corrected to `notebooks/rag_to_agents_lab.ipynb` and `notebooks/rag_to_agents_prep.sql`.
 
 **Section restructure: §3.2 and §5.4.** In the original plan, all six tools (four data-retrieval + `remember` + `recall`) were defined together in §3.2. In the current notebook, the three memory tools (`remember`, `recall`, `recall_similar`) are deferred to §5.4 because their implementation depends on the `OracleStore` instance, which is built alongside the checkpointer just before the graph is compiled. The notebook's §3.2 explicitly notes this deferral so the learner isn't confused by the count.
 
@@ -255,8 +255,8 @@ Preserved verbatim from the April 23, 2026 version of this document so that futu
 
 | Decision | Choice (1.0.0) | Rationale (1.0.0) |
 |----------|----------------|-------------------|
-| Notebook shape | New standalone `rag_to_agents_lab.ipynb` in `docs/` | Keeps data_fundamentals notebook focused on multi-model SQL; this one focuses on RAG to agent. |
-| Prereqs | No assumption of prior notebook state. Learner runs the documented DB prep sequence plus `docs/rag_to_agents_prep.sql`. Section 0 validates readiness. | Notebook runs reliably regardless of what else has been done against the database. |
+| Notebook shape | New standalone `rag_to_agents_lab.ipynb` in `notebooks/` | Keeps data_fundamentals notebook focused on multi-model SQL; this one focuses on RAG to agent. |
+| Prereqs | No assumption of prior notebook state. Learner runs the documented DB prep sequence plus `notebooks/rag_to_agents_prep.sql`. Section 0 validates readiness. | Notebook runs reliably regardless of what else has been done against the database. |
 | Agent framework | LangGraph (StateGraph with tool-calling node + tool node) | Matches the "AI agent reasoning loop" slide 1-to-1. Current LangChain-recommended agent pattern. |
 | LLM runtime | Ollama via `langchain-ollama.ChatOllama` | Local, private, free; matches workshop expectations. |
 | Ollama model | Configurable `OLLAMA_MODEL` variable | Model tag unknown at authoring time; configurable cell lets the notebook run with `llama3.1`, `llama3.2`, `qwen2.5`, etc. |

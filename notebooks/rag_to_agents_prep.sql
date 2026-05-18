@@ -4,7 +4,7 @@
 -- Run as: PRISM user (the same schema loaded by schema-data/prism-setup.sql)
 --
 -- Example:
---   sqlplus prism/<password>@localhost:1521/FREEPDB1 @docs/rag_to_agents_prep.sql
+--   sqlplus prism/<password>@localhost:1521/FREEPDB1 @notebooks/rag_to_agents_prep.sql
 --
 -- Purpose:
 --   Creates the optional hybrid vector index on DOCUMENT_CHUNKS used by the
@@ -21,7 +21,7 @@
 --   3. python schema-data/prism-seed.py     (sample data)
 --   4. python schema-data/prism-ingest.py   (chunk + embed narratives)
 --   5. @schema-data/prism-indexes.sql       (HNSW vector index on DOCUMENT_CHUNKS)
---   6. @docs/rag_to_agents_prep.sql         (this script)
+--   6. @notebooks/rag_to_agents_prep.sql     (this script)
 --
 -- Idempotent: safe to re-run. Existing objects are dropped and recreated.
 -- ============================================================================
@@ -98,7 +98,7 @@ PROMPT     memory is built by langgraph-oracledb's OracleStore inside the
 PROMPT     notebook (cell §5.4) on first run.
 PROMPT   - LangGraph thread checkpoints are managed by langgraph-oracledb's
 PROMPT     OracleSaver, also from the notebook.
-PROMPT  Next step: open docs/rag_to_agents_lab.ipynb and run Section 0.
+PROMPT  Next step: open notebooks/rag_to_agents_lab.ipynb and run Section 0.
 PROMPT ============================================================================
 
 SET FEEDBACK ON
