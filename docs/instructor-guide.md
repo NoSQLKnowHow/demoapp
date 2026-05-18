@@ -17,9 +17,10 @@ Replace the deck placeholders above with the approved PowerPoint filenames or in
 
 1. Deliver the approved deck content for the conceptual story.
 2. Switch to the notebook when the deck reaches a hands-on section.
-3. Use the checkpoint tables below to know when to pause, confirm learner progress, and decide whether to continue or skip optional content.
-4. Use the troubleshooting section when learners hit common setup or runtime issues.
-5. Use the cut lines when time is short.
+3. Remember, we are here to pitch solutions, not features or products. Yes these labs use Oracle features and products, but that is secondary or tertiary messaging.
+4. Use the checkpoint tables below to know when to pause, confirm learner progress, and decide whether to continue or skip optional content.
+5. Use the troubleshooting section when learners hit common setup or runtime issues.
+6. Use the cut lines when time is short.
 
 ## Assumptions for LiveLabs delivery
 
