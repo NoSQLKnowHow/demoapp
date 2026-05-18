@@ -2,9 +2,11 @@
 
 **Companion app for the data fundamentals presentation series**
 
-**Version:** 1.2.1
+**Version:** 1.3.0
 **Author:** Kirk Kirkconnell (Oracle Developer Relations)
-**Last Updated:** March 9, 2026
+**Last Updated:** May 18, 2026
+
+**Changes in 1.3.0** (May 18, 2026): Added LangGraph agent memory architecture (§5.7) backed by `langgraph-oracledb` (`OracleSaver` for thread checkpoints, `OracleStore` for long-term semantic memory). Moved "RAG integration" and "Agent memory architecture" from Future Considerations (§11) into the implemented feature set, since both now ship as the rag-to-agents lab. Added a Companion Labs section (§5.7) covering the data-fundamentals and rag-to-agents notebooks.
 
 ---
 
@@ -35,17 +37,20 @@ Application developers, especially those who might already have used the Oracle 
 
 ### 3.1 Technology stack
 
-| Layer        | Technology                                    |
-|--------------|-----------------------------------------------|
-| Frontend     | React (with Tailwind CSS for styling)         |
-| Backend API  | FastAPI (Python)                              |
-| Database     | Oracle AI Database 26ai / Autonomous Database |
-| DB Driver    | python-oracledb                               |
-| MongoDB API  | Oracle Database API for MongoDB (pymongo)     |
-| Embeddings   | Oracle ONNX embedding model (DEMO_MODEL)      |
-| Graph Viz    | Cytoscape.js (via react-cytoscapejs)          |
-| Auth         | Basic authentication (username/password)       |
-| Deployment   | OCI (hosted) or local dev against own ADB      |
+| Layer             | Technology                                          |
+|-------------------|-----------------------------------------------------|
+| Frontend          | React (with Tailwind CSS for styling)               |
+| Backend API       | FastAPI (Python)                                    |
+| Database          | Oracle AI Database 26ai / Autonomous Database       |
+| DB Driver         | python-oracledb                                     |
+| MongoDB API       | Oracle Database API for MongoDB (pymongo)           |
+| Embeddings        | Oracle ONNX embedding model (DEMO_MODEL)            |
+| Agent framework   | LangGraph + Ollama (rag-to-agents lab only)         |
+| Agent persistence | `langgraph-oracledb` (OracleSaver + OracleStore)    |
+| LLM integration   | langchain + langchain-ollama + langchain-community  |
+| Graph Viz         | Cytoscape.js (via react-cytoscapejs)                |
+| Auth              | Basic authentication (username/password)            |
+| Deployment        | OCI (hosted) or local dev against own ADB           |
 
 ### 3.2 High-level architecture
 
@@ -117,14 +122,14 @@ This is the single source of truth. All projections derive from these tables.
 
 **Core tables:**
 
-- **DISTRICTS** — City districts with boundaries, population, and classification (residential, industrial, commercial, mixed-use).
-- **INFRASTRUCTURE_ASSETS** — Physical assets: Harbor Bridge, Substation Gamma, water pipelines, communication towers, etc. Each belongs to a district, has a type, status, commissioning date, and a `specifications` column stored as the JSON data type. This JSON column holds asset-type-specific technical attributes (e.g., load capacity for a bridge, voltage rating for a substation, diameter for a pipeline) that vary by asset type.
-- **OPERATIONAL_PROCEDURES** — A JSON collection table storing standard operating procedures and playbooks as native JSON documents (e.g., "High Voltage Substation Inspection Protocol," "Bridge Structural Assessment Procedure," "Emergency Pipeline Leak Response"). Each document contains steps, safety checklists, required equipment, escalation contacts, and estimated durations. This is self-contained reference material with no foreign key relationships to other tables. Accessible via both SQL and the Oracle Database API for MongoDB.
-- **MAINTENANCE_LOGS** — Free-text maintenance and incident reports tied to infrastructure assets. Narrative content is chunked and embedded for vector search.
-- **INSPECTION_REPORTS** — Structured inspection records tied to assets. The summary field is vectorized for semantic search.
-- **INSPECTION_FINDINGS** — Individual findings within inspection reports, with severity, category, and recommendations. The description field is vectorized for semantic search.
-- **ASSET_CONNECTIONS** — Junction table recording physical connectivity between infrastructure assets (which pipeline feeds which substation, which sensor monitors which bridge segment). This is the foundation for graph projection.
-- **DOCUMENT_CHUNKS** — Stores chunked text and vector embeddings for all vectorized content (maintenance log narratives, inspection report summaries, inspection finding descriptions). A polymorphic reference design allows chunks from any source table. This also allows multiple chunks to be associated with each piece of content.
+- **DISTRICTS**: City districts with boundaries, population, and classification (residential, industrial, commercial, mixed-use).
+- **INFRASTRUCTURE_ASSETS**: Physical assets: Harbor Bridge, Substation Gamma, water pipelines, communication towers, etc. Each belongs to a district, has a type, status, commissioning date, and a `specifications` column stored as the JSON data type. This JSON column holds asset-type-specific technical attributes (e.g., load capacity for a bridge, voltage rating for a substation, diameter for a pipeline) that vary by asset type.
+- **OPERATIONAL_PROCEDURES**: A JSON collection table storing standard operating procedures and playbooks as native JSON documents (e.g., "High Voltage Substation Inspection Protocol," "Bridge Structural Assessment Procedure," "Emergency Pipeline Leak Response"). Each document contains steps, safety checklists, required equipment, escalation contacts, and estimated durations. This is self-contained reference material with no foreign key relationships to other tables. Accessible via both SQL and the Oracle Database API for MongoDB.
+- **MAINTENANCE_LOGS**: Free-text maintenance and incident reports tied to infrastructure assets. Narrative content is chunked and embedded for vector search.
+- **INSPECTION_REPORTS**: Structured inspection records tied to assets. The summary field is vectorized for semantic search.
+- **INSPECTION_FINDINGS**: Individual findings within inspection reports, with severity, category, and recommendations. The description field is vectorized for semantic search.
+- **ASSET_CONNECTIONS**: Junction table recording physical connectivity between infrastructure assets (which pipeline feeds which substation, which sensor monitors which bridge segment). This is the foundation for graph projection.
+- **DOCUMENT_CHUNKS**: Stores chunked text and vector embeddings for all vectorized content (maintenance log narratives, inspection report summaries, inspection finding descriptions). A polymorphic reference design allows chunks from any source table. This also allows multiple chunks to be associated with each piece of content.
 
 ### 4.2 How each projection maps
 
@@ -227,9 +232,9 @@ This sub-section demonstrates that the OPERATIONAL_PROCEDURES collection is simu
 
 Walk through the pipeline that prepared content for vector search:
 
-1. **Chunking** — How source text was broken into chunks using `VECTOR_CHUNKS`. Displays chunk boundaries, explains chunking strategies (fixed-size, semantic), and shows why chunk size matters for retrieval quality.
-2. **Embedding** — How each chunk was passed through the Oracle ONNX embedding model (`DEMO_MODEL`) to produce a vector. Visualizes a single chunk becoming a high-dimensional vector. Explains that the embedding model captures semantic meaning, not just keywords.
-3. **Storage** — How the resulting vectors are stored in a VECTOR data type column in the DOCUMENT_CHUNKS table, alongside the original chunk text and a reference back to the source record. Emphasizes: the vector lives with the data, not in a separate system.
+1. **Chunking.** How source text was broken into chunks using `VECTOR_CHUNKS`. Displays chunk boundaries, explains chunking strategies (fixed-size, semantic), and shows why chunk size matters for retrieval quality.
+2. **Embedding.** How each chunk was passed through the Oracle ONNX embedding model (`DEMO_MODEL`) to produce a vector. Visualizes a single chunk becoming a high-dimensional vector. Explains that the embedding model captures semantic meaning, not just keywords.
+3. **Storage.** How the resulting vectors are stored in a VECTOR data type column in the DOCUMENT_CHUNKS table, alongside the original chunk text and a reference back to the source record. Emphasizes: the vector lives with the data, not in a separate system.
 
 #### 5.4.2 Hybrid Vector Indexes (Learn mode)
 
@@ -268,6 +273,20 @@ This is the "aha moment" section that ties everything together.
 - Shows a visual "data lineage" diagram: one INSERT into the canonical layer, four different query paths reading from it.
 - Reinforces the polyglot persistence contrast: "In a polyglot architecture, this single asset's data would live in four different databases, with sync jobs between them. Here, it is one database, one write, four projections."
 
+### 5.7 Section: Companion labs (Jupyter notebooks)
+
+The web application is the primary demo surface, but two companion Jupyter notebooks in `notebooks/` extend the story for hands-on workshop use against the same Prism dataset:
+
+**`data_fundamentals_lab.ipynb`**: A guided tour of the four data projections (relational, JSON, graph, vector) and Oracle 26ai features (`VECTOR_DISTANCE`, `VECTOR_CHUNKS`, SQL/PGQ `GRAPH_TABLE`, JSON Duality Views, hybrid search) running directly against the canonical Prism schema. Pairs with the Data Fundamentals presentation.
+
+**`rag_to_agents_lab.ipynb`**: A maturity-ladder walkthrough that progressively builds: (1) grounded RAG over `V_CHUNKS_UNIFIED` using in-database `DEMO_MODEL` embeddings, (2) a deterministic LLM-driven workflow (classify, retrieve, draft, format), and (3) a LangGraph agent powered by Ollama with both short-term (thread) and long-term (semantic) memory. Both memory surfaces are durable in Oracle via `langgraph-oracledb`: `OracleSaver` for checkpoints, `OracleStore` for cross-session memory with HNSW vector search. Pairs with the "From RAG to Agents" presentation in the Developer Tech Days series.
+
+Both notebooks read from the same canonical Prism dataset described in §4. The rag-to-agents lab additionally creates its own framework-managed tables at runtime (`OracleStore` builds `store_bridge` and `store_vectors_bridge`; `OracleSaver` builds `checkpoints`, `checkpoint_blobs`, `checkpoint_writes`) via idempotent `.setup()` calls, with no separate DBA step. The optional hybrid vector index on `DOCUMENT_CHUNKS` is created by `notebooks/rag_to_agents_prep.sql`.
+
+The notebooks share the same UMT thesis as the web app: one canonical store, many shapes. The agent's long-term memory is the most pointed demonstration: rather than introducing a separate vector database (Pinecone, Weaviate) or a separate KV store (Redis) to hold agent state, both surfaces live in the same Oracle 26ai instance as the source data, embedded with the same ONNX model, queryable by the same SQL.
+
+The notebooks are not a replacement for the web app; they're a complementary surface. A developer running the workshop image gets both: the web app for spatial exploration of the data, and the notebooks for code-level depth on the same dataset.
+
 ---
 
 ## 6. UI/UX design
@@ -303,42 +322,42 @@ When the toggle is switched to Learn Mode:
 ```
 /api/v1/
 ├── relational/
-│   ├── districts/                    GET — List districts
-│   ├── districts/{id}                GET — District detail
-│   ├── assets/                       GET — List assets (filterable by district, type, status)
-│   ├── assets/{id}                   GET — Asset detail with specifications and maintenance history
-│   └── maintenance-logs/             GET — List/search maintenance logs (keyword)
+│   ├── districts/                    GET. List districts
+│   ├── districts/{id}                GET. District detail
+│   ├── assets/                       GET. List assets (filterable by district, type, status)
+│   ├── assets/{id}                   GET. Asset detail with specifications and maintenance history
+│   └── maintenance-logs/             GET. List/search maintenance logs (keyword)
 │
 ├── json/
-│   ├── inspections/                  GET — List inspection reports as JSON documents (Duality View)
-│   ├── inspections/{id}              GET — Single inspection document
-│   ├── inspections/{id}              PUT — Update inspection (demonstrates Duality View round-trip)
-│   ├── procedures/                   GET — List operational procedures (JSON collection, via SQL)
-│   ├── procedures/{id}               GET — Single procedure document
-│   └── procedures/mongodb            GET — Same query via MongoDB API (for side-by-side comparison)
+│   ├── inspections/                  GET. List inspection reports as JSON documents (Duality View)
+│   ├── inspections/{id}              GET. Single inspection document
+│   ├── inspections/{id}              PUT. Update inspection (demonstrates Duality View round-trip)
+│   ├── procedures/                   GET. List operational procedures (JSON collection, via SQL)
+│   ├── procedures/{id}               GET. Single procedure document
+│   └── procedures/mongodb            GET. Same query via MongoDB API (for side-by-side comparison)
 │
 ├── graph/
-│   ├── assets/{id}/connections       GET — Direct connections for an asset
-│   ├── assets/{id}/neighborhood      GET — N-hop neighborhood
-│   └── paths/                        GET — Shortest path between two assets
+│   ├── assets/{id}/connections       GET. Direct connections for an asset
+│   ├── assets/{id}/neighborhood      GET. N-hop neighborhood
+│   └── paths/                        GET. Shortest path between two assets
 │
 ├── vector/
-│   ├── search/                       POST — Semantic search (query text, top-K, optional filters)
-│   ├── search/keyword                POST — Keyword search (same query, for comparison)
-│   ├── search/hybrid                 POST — Hybrid search (semantic + relational filters)
-│   └── pipeline/explain              GET — Returns the ingestion pipeline steps (for Learn Mode)
+│   ├── search/                       POST. Semantic search (query text, top-K, optional filters)
+│   ├── search/keyword                POST. Keyword search (same query, for comparison)
+│   ├── search/hybrid                 POST. Hybrid search (semantic + relational filters)
+│   └── pipeline/explain              GET. Returns the ingestion pipeline steps (for Learn Mode)
 │
 ├── ingest/
-│   ├── maintenance-logs/             POST — Submit new maintenance log (insert + vectorize)
-│   └── inspection-reports/           POST — Submit new inspection report with findings (insert + vectorize)
+│   ├── maintenance-logs/             POST. Submit new maintenance log (insert + vectorize)
+│   └── inspection-reports/           POST. Submit new inspection report with findings (insert + vectorize)
 │
 ├── prism/
-│   └── assets/{id}/unified           GET — All four projections for a single asset
+│   └── assets/{id}/unified           GET. All four projections for a single asset
 │
 └── meta/
-    ├── sql/{operation_id}            GET — The SQL text for a given operation
-    ├── explain/{operation_id}        GET — Explain plan for a given operation
-    └── concepts/{concept_slug}       GET — Educational content for a concept
+    ├── sql/{operation_id}            GET. The SQL text for a given operation
+    ├── explain/{operation_id}        GET. Explain plan for a given operation
+    └── concepts/{concept_slug}       GET. Educational content for a concept
 ```
 
 ### 7.2 Response envelope
@@ -625,7 +644,7 @@ Run `prism-setup.sql` against the ADB instance. This script:
 
 1. Creates the PRISM application user and grants required privileges.
 2. Creates all canonical tables (DISTRICTS, INFRASTRUCTURE_ASSETS, OPERATIONAL_PROCEDURES, MAINTENANCE_LOGS, INSPECTION_REPORTS, INSPECTION_FINDINGS, ASSET_CONNECTIONS, DOCUMENT_CHUNKS).
-3. Loads the ONNX embedding model (DEMO_MODEL) into the database.
+3. Loads the [ONNX embedding model](https://adwc4pm.objectstorage.us-ashburn-1.oci.customer-oci.com/p/TtH6hL2y25EypZ0-rrczRZ1aXp7v1ONbRBfCiT-BDBN8WLKQ3lgyW6RxCfIFLdA6/n/adwc4pm/b/OML-ai-models/o/all_MiniLM_L12_v2_augmented.zip) (DEMO_MODEL) into the database.
 4. Creates the JSON Duality View (INSPECTION_REPORT_DV).
 5. Creates the SQL/PGQ property graph (CITYPULSE_GRAPH).
 
@@ -713,11 +732,11 @@ The JSON files use `asset_name` as the reference key (not database IDs), so they
 | DISTRICTS               | 7                     | Mix of classification types                     |
 | INFRASTRUCTURE_ASSETS   | 28                    | Spread across districts, multiple types, each with JSON specifications |
 | OPERATIONAL_PROCEDURES  | 9                     | JSON documents covering electrical, structural, pipeline, emergency, and routine categories |
-| MAINTENANCE_LOGS        | 200-400               | Rich narrative text, varying severity and dates  |
-| INSPECTION_REPORTS      | 40-80                 | Spread across assets, meaningful summaries       |
-| INSPECTION_FINDINGS     | 120-250               | 2-5 findings per report, detailed descriptions   |
+| MAINTENANCE_LOGS        | 200 to 400            | Rich narrative text, varying severity and dates  |
+| INSPECTION_REPORTS      | 40 to 80              | Spread across assets, meaningful summaries       |
+| INSPECTION_FINDINGS     | 120 to 250            | 2 to 5 findings per report, detailed descriptions   |
 | ASSET_CONNECTIONS       | 25                    | Dense enough for interesting graph traversals    |
-| DOCUMENT_CHUNKS         | ~800-1500             | Generated by ingestion pipeline from logs, reports, and findings |
+| DOCUMENT_CHUNKS         | ~800 to 1500          | Generated by ingestion pipeline from logs, reports, and findings |
 
 ### 10.2 Regenerating narrative content
 
@@ -736,9 +755,11 @@ Supported providers: OCI Generative AI (`oci`), Anthropic Claude (`claude`), Ope
 
 These are explicitly out of scope for the initial version but worth noting for future iterations as they will be part of future labs to add to this app:
 
-- **RAG integration:** Add an "Ask CityPulse" feature that retrieves relevant chunks via vector search, sends them as context to an LLM, and displays a generated answer. This aligns with the RAG content in the Data Fundamentals presentation and is a natural extension of the vector search section.
-- **Agent memory architecture:** Demonstrate episodic, semantic, and procedural memory as projections within the canonical data layer.
+- **"Ask CityPulse" in the web app:** Bring the RAG retrieval pattern (currently only demonstrated in the rag-to-agents notebook) into the web app as a chat-style interface over the same `DOCUMENT_CHUNKS` data. The notebook lab demonstrates the building blocks; the web app integration is the next step.
+- **Agent surface in the web app:** Expose the LangGraph agent from the rag-to-agents notebook as a web-app feature. The agent's memory tables (`store_bridge`, `checkpoints`) are already durable in the same Oracle instance, so the architectural work is done; what's needed is the API surface and UI.
+- **Memory architecture depth:** The current implementation gives developers the raw retrieval primitive (`recall` / `recall_similar` over `OracleStore`). Future work covers hierarchical memory, episodic vs. semantic vs. procedural, summarization on write, eviction policies, and per-user/per-team scoping via namespaces. This is the topic of the follow-up presentation in the agents series.
 - **Time series projection:** Add sensor readings from Harbor Bridge and Substation Gamma to demonstrate temporal data as a fifth projection.
+- **Hybrid search in the web app:** The rag-to-agents notebook uses `DBMS_HYBRID_VECTOR.SEARCH` for richer agent retrieval. Bringing this into the web app's Vector Search section is a natural extension, and it's already a teaser in §5.4.2.
 
 ---
 
