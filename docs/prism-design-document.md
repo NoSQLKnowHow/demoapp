@@ -6,12 +6,6 @@
 **Author:** Kirk Kirkconnell (Oracle Developer Relations)
 **Last Updated:** May 18, 2026
 
-**Changes in 1.4.0** (May 18, 2026): Major restructure to reflect current scope. The deliverables today are the CityPulse dataset, schema, ingestion pipeline, and the two companion Jupyter notebooks. The Prism web application (React + FastAPI) is no longer in active development and has been relocated to §10 Future possibilities, where its original design is preserved in full for when work resumes. The main body of this document now describes what actually ships.
-
-**Changes in 1.3.0** (May 18, 2026): Added LangGraph agent memory architecture backed by `langgraph-oracledb` (`OracleSaver` for thread checkpoints, `OracleStore` for long-term semantic memory). Moved "RAG integration" and "Agent memory architecture" from Future Considerations into the implemented feature set, since both now ship as the rag-to-agents lab. Added a Companion Labs section covering the data-fundamentals and rag-to-agents notebooks.
-
----
-
 ## 1. Purpose and vision
 
 Prism brings the concepts from the Data Fundamentals presentation series to life through a curated dataset and two hands-on Jupyter notebooks. Where the presentations tell, the workshop materials show: developers work directly against a single canonical dataset stored in Oracle AI Database 26ai and see that same data accessed as relational rows, JSON documents, graph relationships, and vector embeddings, all without data duplication or synchronization overhead.
@@ -716,6 +710,14 @@ The scripted deployment process for a public-facing hosted instance would have b
 - **Memory architecture depth:** The current rag-to-agents lab gives developers the raw retrieval primitives (`recall` / `recall_similar` over `OracleStore`). Future work covers hierarchical memory, episodic vs. semantic vs. procedural, summarization on write, eviction policies, and per-user/per-team scoping via namespaces. This is the topic of the follow-up presentation in the agents series.
 - **Hybrid search expansion:** The rag-to-agents notebook uses `DBMS_HYBRID_VECTOR.SEARCH`. Future work could expose this through a more structured API for use across more notebooks and (eventually) the web app.
 - **Workshop image builds:** A reproducible container image with all dependencies (the top-level `requirements.txt`), Ollama models, and the notebooks pre-installed. Cuts setup time at workshops from "follow these eight steps" to "open the notebook."
+
+---
+
+## 11. Revision history
+
+**1.4.0** (May 18, 2026): Major restructure to reflect current scope. The deliverables today are the CityPulse dataset, schema, ingestion pipeline, and the two companion Jupyter notebooks. The Prism web application (React + FastAPI) is no longer in active development and has been relocated to §10 Future possibilities, where its original design is preserved in full for when work resumes. The main body of this document now describes what actually ships.
+
+**1.3.0** (May 18, 2026): Added LangGraph agent memory architecture backed by `langgraph-oracledb` (`OracleSaver` for thread checkpoints, `OracleStore` for long-term semantic memory). Moved "RAG integration" and "Agent memory architecture" from Future Considerations into the implemented feature set, since both now ship as the rag-to-agents lab. Added a Companion Labs section covering the data-fundamentals and rag-to-agents notebooks.
 
 ---
 
