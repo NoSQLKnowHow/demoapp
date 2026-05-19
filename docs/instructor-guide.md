@@ -134,6 +134,83 @@ Recommended flow: use the approved RAG-to-Agents deck for the conceptual progres
 | Memory follow-up is weak | Prior turn did not store or retrieve the expected memory | Re-run the first turn and memory-inspection cells; confirm Oracle-backed memory tables are available. |
 | Output format varies | Normal LLM variability | Focus learners on grounding, traceability, and tool use rather than exact wording. |
 
+## Talk-track for the marquee moments
+
+Each workshop has one moment that carries the workshop's whole argument. If the audience walks away remembering only one thing, it should be this. These moments deserve preparation more than other parts of the lab. The scripts below are starting points; make them your own. But have *something* prepared, because winging it through the marquee moment is the most common failure mode in technical workshops.
+
+### Data Fundamentals: the unified query (Section 5)
+
+This is where you make or lose the workshop. Up to this point you've shown each data shape in isolation: relational rows in Section 1, JSON in Section 1, graph traversal in Section 1, vector search in Section 4. Section 5 puts them all in one SQL statement, against the same canonical dataset, in the same transaction, with no synchronization. That is the entire Data Fundamentals argument.
+
+**Before running the cell:**
+
+> "OK, here's the moment everything has been building toward. So far you've seen relational queries, JSON queries, graph traversal, and vector search, each in their own section. What I'm about to run is one SQL statement that does all four of those things at once. Same database. Same dataset. Same transaction. No sync layer between data shapes. Watch the result."
+
+**During the cell execution (usually 1-3 seconds):**
+
+Don't fill the silence with technical detail. Just say:
+
+> "One statement. Watch what comes back."
+
+**After the result appears:**
+
+> "What just happened: one SQL statement traversed a graph, did a vector search, pulled JSON specifications, and applied a relational filter. Look at what isn't here. There's no Pinecone client, no Neo4j driver, no separate JSON document store, no ETL job copying data between any of them. Same canonical data, same transaction, four shapes. *This* is the converged database in one query."
+
+If the audience seems engaged, this is the right moment to walk through the CTEs:
+
+> "Let me show you how it's structured. There are five named subqueries up top, see the WITH clause. The first one resolves an asset by name; relational lookup. The second one extracts specifications from a JSON column. The third one does a SQL/PGQ graph traversal to find connected assets. The fourth one runs a vector search over the maintenance history. And the final SELECT assembles everything into one JSON document. No magic; just SQL doing what databases do, with data shapes that didn't exist in databases ten years ago."
+
+If timing is tight, skip the CTE walkthrough and let the result speak for itself.
+
+**Anti-patterns to avoid:**
+
+- Don't read the result aloud. The audience can read.
+- Don't apologize for the SQL being long. It's long *because* it does four things; that's the point.
+- Don't compare to "what this would look like in MongoDB plus Pinecone plus Neo4j" by sketching code on the screen. That weakens the moment because the audience starts thinking about the comparison instead of absorbing the result.
+
+### RAG-to-Agents: the agent's first turn (Section 5.8)
+
+This is where the workshop's narrative arc lands. Sections 1-4 built up to this: retrieval, then grounded retrieval, then deterministic workflows over retrieval, then tools wrapping retrieval. Now an agent uses all of it autonomously.
+
+**Before running the cell:**
+
+> "OK, here's the moment. Up to this point, we've been the ones deciding what to do: I retrieve, I prompt, I run the workflow steps in this order. Now I'm going to give that decision to the model. I'll hand it an incident, give it a set of tools, give it an SOP for what to do with a bridge incident, and ask it to figure out the rest. Watch the stream."
+
+**During the cell execution (30-90 seconds, depending on the local model):**
+
+This is the hardest part to instructor through. The agent will emit chunks slowly. The audience needs guidance about what to look for, but you can't predict exactly when each event will appear. A few options for what to say:
+
+> "Watch for three things: which tools it decides to call, what order it calls them in, and whether it remembers to call `remember` at the end. The SOP we gave it says it has to. We'll see if it complies."
+
+Then go quiet and let the agent run. When tool calls start streaming:
+
+> "There's the first tool call. It chose `get_asset_overview`. That makes sense; it doesn't know anything about this asset yet."
+
+Continue narrating as new tool calls appear:
+
+> "Now `get_recent_incidents`. Now `search_incidents_semantic` over the maintenance logs. It's building context the same way you would."
+
+When the final answer comes back:
+
+> "And there's the response. Recommendation, rationale, next steps. Now watch the last thing it does."
+
+(If `remember` got called, that's visible in the trace.)
+
+> "It called `remember`. That just wrote a note to long-term memory. Next turn, we'll see the agent recall it."
+
+**Anti-patterns to avoid:**
+
+- Don't pre-script what the agent will do. The model is non-deterministic; you'll be wrong sometimes. Narrate what you see, not what you expect.
+- Don't apologize when the agent does something unexpected. If it calls tools in a weird order or skips one you predicted, treat that as a feature: "interesting; it didn't bother with the unified query this time. The SOP didn't require it, and the cheaper tools gave it enough context. That's a small example of why we don't hard-code the order."
+- Don't get into LangGraph internals. The audience can see the agent decide. They don't need to understand `StateGraph` for the moment to land. Save framework explanation for after the demo.
+- Don't refresh and re-run if the first turn produces a weak answer. Each fresh run accumulates memory state. Better to talk through the answer you got than to chase a better one. If you must re-run, run the reset script first (see [Cell idempotency](#cell-idempotency-what-is-safe-to-re-run) above).
+
+**If the agent's behavior is unexpected:**
+
+The agent may skip a tool you expected it to call, call an unexpected one, produce a weak final answer, or take longer than expected. None of these are workshop failures *if* you frame them right. The honest framing:
+
+> "What we're watching is a real agent making real decisions with a local model. Some runs are sharper than others; that's the nature of working with LLMs. The architectural point still holds: it has tools, it has memory, it has a database it can query for grounded context, and it made decisions about which of those to use. Whether this particular run was its best work is a separate question from whether the pattern works."
+
 ## Reset and rerun guidance
 
 Use reset guidance when a LiveLabs environment has already been used or when a session needs to be repeated.
