@@ -225,7 +225,7 @@ If you've decided the kernel is wedged, here's the fastest path back:
 1. **Restart the kernel** (Kernel menu → Restart).
 2. **Re-run Section 0** (cells 1 through ~9). This re-establishes the database connection and the readiness probe. About 15 seconds.
 3. **Re-run Section 1** (cells 10 through ~28). All read-only queries; safe to re-run. About 20 seconds.
-4. **Section 2: skip the data-mutation cells.** The cell that inserts a new maintenance log (cell 36 in current numbering, "Step 1: Insert a new maintenance log for Harbor Bridge") writes to the database. Re-running it adds a duplicate row. If you'd already run it before the wedge, skip it now. The cells that show what the embedding looks like are safe to re-run.
+4. **Section 2: the maintenance-log insert cell** (cell 36, "Step 1: Insert a new maintenance log for Harbor Bridge") has a built-in cleanup block that deletes any prior run of this same log before inserting. Safe to re-run; it produces the same final state.
 5. **Section 3: the vector index cell** (cell 40) has a drop-if-exists block at the top, so it's idempotent. Safe to re-run, but takes ~30 seconds on a shared environment.
 6. **Continue from where you were.** Section 4 (vector search) and onward are all reads.
 
@@ -248,7 +248,59 @@ Total recovery time: about 60 seconds plus whatever the agent's first turn takes
 
 ### A note on sequence ambiguity
 
-The recovery flows above tell you which cells to skip after a wedge, but they don't tell you the full story of which cells are idempotent. A future revision of this guide will add a "Cell idempotency: what's safe to re-run" section that catalogs this for both notebooks. Until then, the rule of thumb is: read-only cells (SELECT queries, embedding inspection, retrieval display) are always safe; data-mutation cells (INSERT, agent memory writes, `run_agent()` calls) accumulate state on each run.
+The recovery flows above tell you which cells to skip after a wedge. The full reference for which cells are idempotent and which accumulate state is in [Cell idempotency: what is safe to re-run](#cell-idempotency-what-is-safe-to-re-run), immediately below.
+
+## Cell idempotency: what is safe to re-run
+
+When the recovery playbook (above) sends you back to re-run sections of a notebook, this is the reference for "will running this cell again break anything?" The notebooks are designed to be re-run friendly, but a few cells have specific behaviors worth knowing about.
+
+Three categories:
+
+- **Safe** means re-running produces the same observable result. The cell may be slow or expensive, but you can run it as many times as you want without surprises.
+- **Adds state** means re-running accumulates something (database rows, memory items, etc.). The demo still works after re-running but inspection cells later may show more data than the audience saw the first time.
+- **Expensive** means re-running takes significant time or rebuilds something that was already there. Idempotent in outcome but not in time-cost.
+
+### Data Fundamentals lab
+
+| Section / cell | Category | What happens on re-run |
+|---|---|---|
+| Section 0: Configuration and readiness check | Safe | Pure read-only checks; no state change. About 5 seconds. |
+| Section 1: Data model exploration (all cells) | Safe | All `SELECT` queries; no writes. |
+| Section 2: Embedding inspection cells | Safe | Generates an embedding for display; nothing stored. |
+| Section 2: "Insert a new maintenance log and vectorize it" (cell 36) | Safe | Cell has a built-in cleanup block that deletes any prior run of this same log before inserting. Re-running is safe and produces the same final state. |
+| Section 3: Vector index creation (cell 40) | Expensive | Drops the existing index and rebuilds it. About 30 seconds on a shared environment. Safe but worth skipping if you can confirm the index already exists from your prep run. |
+| Section 4: Vector search cells | Safe | Read-only queries. |
+| Section 5: Unified query cells | Safe | Read-only queries. |
+| Section 6: Hybrid search setup (cell 64) | Expensive | Drops and recreates the `hybrid_search_demo` table, repopulates from maintenance logs and findings. About 10 seconds. Safe to re-run. |
+| Section 6: Hybrid search query cells | Safe | Read-only queries. |
+| Section 6: Cleanup (cell 84) | Safe | Drops the demo hybrid index. Safe to re-run (drop-if-exists pattern). |
+
+**Bottom line for Data Fundamentals:** every cell in the notebook is idempotent. The only thing to be aware of is that cell 40 (vector index rebuild) and cell 64 (hybrid table rebuild) take longer than the others on re-run. If you're recovering from a wedge and timing is tight, you can skip cell 40 if the index was already created during your prep run.
+
+### RAG-to-Agents lab
+
+| Section / cell | Category | What happens on re-run |
+|---|---|---|
+| Section 0: Welcome, prerequisites, readiness probe | Safe | Read-only checks and connection setup. |
+| Section 1: RAG retrieval and grounded answers | Safe | Read-only queries plus LLM calls. LLM calls produce different outputs on each run; that's expected for LLM demos. |
+| Section 2: LLM-driven workflow | Safe | Same as Section 1: read-only retrieval plus LLM calls. |
+| Section 3: Tool definitions (cell 44) | Safe | Defines Python functions; no execution side effects. |
+| Section 4: Unified query and wrapper tool | Safe | Read-only queries. |
+| Section 5: Memory setup (cell 58) | Safe | `OracleSaver.setup()` and `OracleStore.setup()` are idempotent. Existing tables are kept; missing ones are created. |
+| Section 5: First agent run (around cell 62) | **Adds state** | Each call to `run_agent(...)` writes one new memory item to `OracleStore` and writes checkpoint rows to `OracleSaver`. Re-running creates a second memory item for the same incident; Section 5.11's inspection cell will then show both. The demo still works; the duplicate is just clutter. |
+| Section 5: Follow-up turn (cell 66) | **Adds state** | Same as the first agent run, plus this turn's checkpointer rehydrates the thread state so it sees the prior turn's memory. Re-running on the same `thread_id` accumulates checkpoints. |
+| Section 5.11: Memory peek | Safe | Read-only `store.search()` call. Shows whatever's in `OracleStore` right now, including any duplicates from re-runs. |
+
+**Bottom line for RAG-to-Agents:** Sections 0 through 4 are fully idempotent. Section 5's agent run cells (the `run_agent(...)` calls) accumulate state every time they're invoked. After a wedge or between sessions, if you want a clean memory inspection in 5.11, run `notebooks/rag_to_agents_reset.sql` before re-running Section 5.
+
+### When to reset vs. when to just re-run
+
+| Situation | Recommended action |
+|---|---|
+| Mid-session kernel wedge, you want to keep the demo going | Don't reset. Re-run cells; accept that 5.11 may show duplicate memory entries. Audience won't notice. |
+| Between back-to-back sessions with different audiences | Run `notebooks/rag_to_agents_reset.sql` between sessions. The second audience starts clean. |
+| You're about to walk through Section 5.11 carefully | Run the reset script before the first agent turn. Keeps 5.11 inspection clean and obvious. |
+| You just want to dry-run a part of the lab | Don't reset between runs. The notebook tolerates accumulated state fine; reset is for situations where audience-facing inspection cells will be confusing. |
 
 ## Troubleshooting quick reference
 
