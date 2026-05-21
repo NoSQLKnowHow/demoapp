@@ -1,6 +1,8 @@
-# Loading an ONNX Embedding Model into Oracle Autonomous Database
+# Loading an ONNX Embedding Model into Oracle Autonomous Database (ADB)
 
-The challenge with ADB is that you don't have filesystem access to the database server, so you can't just drop a `.onnx` file into a directory like you can with Oracle Free Docker. Instead, you need to go through OCI Object Storage as an intermediary.
+> **Running Oracle Database Free in a Docker container instead?** This guide does not apply to you. See [load_onnx_model_docker.md](load_onnx_model_docker.md) for the much simpler filesystem-based approach.
+
+The challenge with ADB is that you don't have filesystem access to the database server, so you can't just drop a `.onnx` file into a directory like you can with Oracle Database Free in Docker. Instead, you need to go through OCI Object Storage as an intermediary.
 
 This guide covers the **recommended approach**: upload the model to Object Storage, pull it into ADB using `DBMS_CLOUD`, then load it with `DBMS_VECTOR`.
 
@@ -231,34 +233,3 @@ DBMS_CLOUD.GET_OBJECT(
 ```
 
 This is better for repeatable deployments but requires managing API keys.
-
----
-
-## For Reference: Oracle Free Docker (Much Simpler)
-
-On Oracle Free Docker, you have filesystem access, so the process is straightforward:
-
-```bash
-# On your host machine, copy the model into the Docker container
-docker cp all_MiniLM_L12_v2.onnx <container_name>:/opt/oracle/models/
-
-# Inside the container (or from sqlplus)
-sqlplus sys/<password>@localhost:1521/FREEPDB1 as sysdba
-
-CREATE OR REPLACE DIRECTORY model_dir AS '/opt/oracle/models';
-GRANT READ, WRITE ON DIRECTORY model_dir TO prism;
-```
-
-```sql
--- Run as PRISM user
-BEGIN
-    DBMS_VECTOR.LOAD_ONNX_MODEL(
-        directory  => 'MODEL_DIR',
-        file_name  => 'all_MiniLM_L12_v2.onnx',
-        model_name => 'DEMO_MODEL'
-    );
-END;
-/
-```
-
-No Object Storage, no credentials, no PAR URLs needed.
