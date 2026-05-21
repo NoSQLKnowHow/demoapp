@@ -49,16 +49,6 @@ FULL_ADMIN=(
 # DELTA (re-run) — exactly the files you listed
 DELTA_ADMIN=(
   db_setup_script_2.sql
-  db_setup_RET_script_2.sql
-  db_setup_HCS_script_2.sql
-  db_setup_ENG_script_2.sql
-  db_setup_MFG_script_2.sql
-  db_setup_SLG_script_2.sql
-  db_setup_GAM_script_2.sql
-  db_setup_TRN_script_2.sql
-  db_setup_COM_script_2.sql
-  db_setup_LSC_script_2.sql
-  db_setup_HTH_script_2.sql
 )
 
 # Helper to emit @ lines and fail fast if a file is missing
@@ -101,9 +91,9 @@ $(emit_at_lines "${ADMIN_LIST[@]}")
 EXIT
 EOF
 
-# --- LOAN only on FULL ---
+# --- Prism only on FULL ---
 if [[ "$MODE" == "FULL" ]]; then
-  USERNAME=loan
+  USERNAME=prism
   "$SQLBIN" -s /nolog <<EOF
 WHENEVER SQLERROR EXIT SQL.SQLCODE
 CONNECT ${USERNAME}/${DBPASSWORD}@"${DBCONNECTION}"
@@ -113,7 +103,7 @@ DEFINE user_ocid='${USER_OCID:-}'
 DEFINE tenancy='${TENANCY_OCID:-}'
 DEFINE fingerprint='${PEM_KEY_FINGERPRINT:-}'
 DEFINE pem_key="${PEM_SINGLE_LINE:-}"
-@db_setup_script_3.sql
+@prism-setup2.sql
 EXIT
 EOF
 

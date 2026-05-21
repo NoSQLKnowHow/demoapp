@@ -35,9 +35,9 @@ import oracledb
 # Configuration
 # ============================================================================
 
-ORACLE_DSN = os.environ.get("ORACLE_DSN")
-ORACLE_USER = os.environ.get("ORACLE_USER", "prism")
-ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD")
+ORACLE_DSN = os.environ.get("DBCONNECTION")
+ORACLE_USER = "prism"
+ORACLE_PASSWORD = os.environ.get("DBPASSWORD")
 ORACLE_WALLET_DIR = os.environ.get("ORACLE_WALLET_DIR")
 
 # Data files directory (shared with the sibling adb/ directory, one
