@@ -1,13 +1,13 @@
-# Loading an ONNX Embedding Model into Oracle Database Free (Docker)
+# Loading an ONNX Embedding Model into Oracle Database Free (Docker/Podman)
 
 > **Running Oracle Autonomous Database (ADB) in OCI instead?** This guide does not apply to you. ADB has no filesystem access to the database server, so you must stage the model through OCI Object Storage. See [load_onnx_model_adb.md](load_onnx_model_adb.md) for that approach.
 
-On Oracle Database Free in a Docker container, you have direct filesystem access to the database server, so loading an ONNX model is straightforward: copy the file into the container, point a database directory at it, and load it with `DBMS_VECTOR`. No Object Storage, no credentials, no PAR URLs needed.
+On Oracle Database Free in a Docker or Podman container, you have direct filesystem access to the database server, so loading an ONNX model is straightforward: copy the file into the container, point a database directory at it, and load it with `DBMS_VECTOR`. No Object Storage, no credentials, no PAR URLs needed. This guide is geared more towards using Docker, but it could be easily changed for Podman since the images are interchangeable.
 
 ## Prerequisites
 
-- A running Oracle Database Free Docker container
-- The ability to run `docker cp` against that container (host shell access)
+- A running Oracle Database Free imag in either a Docker or Podman container
+- The ability to run something like `docker cp` to copy and a file into that container (host shell access)
 - `sysdba` access to the container's database, plus the PRISM user (created by `prism-setup.sql`)
 
 ---
@@ -43,6 +43,8 @@ docker exec <container_name> mkdir -p /opt/oracle/models
 # Copy the model into the container
 docker cp all_MiniLM_L12_v2.onnx <container_name>:/opt/oracle/models/
 ```
+
+Again, these instructions are for Docker, so translate to Podman if that's what you're using.
 
 ---
 
