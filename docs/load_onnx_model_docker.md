@@ -48,9 +48,9 @@ Again, these instructions are for Docker, so translate to Podman if that's what 
 
 ---
 
-## Step 3: Create the PRISM user and GRANT privs as SYS
+## Step 3: Create the `prism` user and grant privs as `SYS`
 
-Connect as `sysdba` and create an Oracle directory object that maps to the container path, then grant the PRISM user access to it.
+Connect as `sysdba` and create an Oracle directory object that maps to the container path, then grant the `prism` user access to it.
 
 ```bash
 sqlplus sys/<password>@localhost:1521/FREEPDB1 as sysdba
@@ -457,7 +457,7 @@ CREATE OR REPLACE VIEW v_chunks_inspection_reports AS
     JOIN districts d ON a.district_id = d.district_id
     WHERE dc.source_table = 'inspection_reports';
 
-PROMPT         View V_CHUNKS_INSPECTION_REPORTS created.
+PROMPT    View V_CHUNKS_INSPECTION_REPORTS created.
 
 -- Individual source view: inspection finding chunks
 CREATE OR REPLACE VIEW v_chunks_inspection_findings AS
@@ -474,7 +474,7 @@ CREATE OR REPLACE VIEW v_chunks_inspection_findings AS
     JOIN districts d ON a.district_id = d.district_id
     WHERE dc.source_table = 'inspection_findings';
 
-PROMPT         View V_CHUNKS_INSPECTION_FINDINGS created.
+PROMPT   View V_CHUNKS_INSPECTION_FINDINGS created.
 
 -- Unified view: all chunks joined to source data with common columns.
 -- This is the primary view for cross-source vector search in the API.
@@ -513,7 +513,7 @@ CREATE OR REPLACE VIEW v_chunks_unified AS
     JOIN districts d ON a.district_id = d.district_id
     WHERE dc.source_table = 'inspection_findings';
 
-PROMPT         View V_CHUNKS_UNIFIED created.
+PROMPT  View V_CHUNKS_UNIFIED created.
 
 PROMPT
 PROMPT --- Verification ---
@@ -547,3 +547,68 @@ SELECT index_name, table_name FROM user_indexes ORDER BY table_name, index_name;
 **ORA-13606: Error from Python** -- You're trying to load a raw Hugging Face model that hasn't been augmented with the required pre/post-processing steps. Use Oracle's pre-built augmented model from the download link in Step 1.
 
 **ORA-54426: Tensor "input_ids" contains 2 batch dimensions** -- Same issue as above. The model needs to be augmented using OML4Py before loading. Use the pre-built version to avoid this.
+
+## Step 6: Importing data into the database
+
+Run python script to pre-populate database with workshop data. 
+
+``` bash
+python prism-seed.py
+```
+
+## Step 7: Create vector embeddings
+
+```sql
+------------------------------------------------------------------------------
+--1. Log into database as prism user
+------------------------------------------------------------------------------
+PROMPT
+PROMPT [1/3] log in as prism user...
+
+sqlplus prism/<password>@FREEPDB1
+
+------------------------------------------------------------------------------
+-- 2. Create vector index
+------------------------------------------------------------------------------
+
+PROMPT
+PROMPT ============================================================================
+PROMPT  PRISM: Post-Ingestion Index Creation
+PROMPT ============================================================================
+
+PROMPT
+PROMPT [2/3] Creating HNSW vector index on DOCUMENT_CHUNKS...
+
+CREATE VECTOR INDEX idx_chunk_embedding
+    ON document_chunks(embedding)
+    ORGANIZATION INMEMORY NEIGHBOR GRAPH
+    DISTANCE COSINE
+    WITH TARGET ACCURACY 95;
+
+PROMPT  Vector index IDX_CHUNK_EMBEDDING created.
+
+------------------------------------------------------------------------------
+-- 3. Verification
+------------------------------------------------------------------------------
+
+PROMPT
+PROMPT [3/3] Verifying...
+
+PROMPT
+PROMPT Vector index:
+
+SELECT index_name, index_type FROM user_indexes WHERE index_name = 'IDX_CHUNK_EMBEDDING';
+
+PROMPT
+PROMPT Chunk counts by source:
+
+SELECT source_table, COUNT(*) AS chunk_count FROM document_chunks GROUP BY source_table;
+
+PROMPT
+PROMPT ============================================================================
+PROMPT  Vector index created successfully.
+PROMPT  Prism is ready to use.
+PROMPT ============================================================================
+PROMPT
+
+```
