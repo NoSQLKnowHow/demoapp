@@ -17,7 +17,7 @@
 --
 -- Prerequisites (run these FIRST, in order):
 --   1. @schema-data/prism-setup.sql         (schema, tables, views, graph)
---   2. Load DEMO_MODEL ONNX embedding model (see docs/load_onnx_model.md)
+--   2. Load DEMO_MODEL ONNX embedding model (method depends on your environment)
 --   3. python schema-data/prism-seed.py     (sample data)
 --   4. python schema-data/prism-ingest.py   (chunk + embed narratives)
 --   5. @schema-data/prism-indexes.sql       (HNSW vector index on DOCUMENT_CHUNKS)
