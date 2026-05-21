@@ -32,9 +32,9 @@ You'll get `all_MiniLM_L12_v2.onnx` (about 133 MB).
 
 ---
 
-## Step 2: Copy the Model into the Container
+## Step 2: Copy the Model into the Docker/Podman container
 
-From your host machine, copy the model into a directory inside the running container. Replace `<container_name>` with your container's name (find it with `docker ps`).
+From your host machine, copy the model into a directory inside the running container. Replace `<container_name>` with your container's name (find it with `docker ps` in Docker).
 
 ```bash
 # Create the target directory inside the container (if it doesn't exist)
@@ -48,21 +48,13 @@ Again, these instructions are for Docker, so translate to Podman if that's what 
 
 ---
 
-## Step 3: Create a Database Directory Pointing at the Model
+## Step 3: Create the PRISM user and GRANT privs as SYS
 
 Connect as `sysdba` and create an Oracle directory object that maps to the container path, then grant the PRISM user access to it.
 
 ```bash
 sqlplus sys/<password>@localhost:1521/FREEPDB1 as sysdba
 ```
-
-```sql
-CREATE OR REPLACE DIRECTORY model_dir AS '/opt/oracle/models';
-```
-
----
-
-## Step 4: Create the PRISM user and GRANT privs as SYS
 
 ```sql
 DEFINE tablespace = USERS
@@ -102,6 +94,7 @@ PROMPT
 PROMPT [2/12] Granting privileges...
 
 -- Session and object creation
+CREATE OR REPLACE DIRECTORY model_dir AS '/opt/oracle/models';
 GRANT CONNECT, RESOURCE TO PRISM;
 GRANT CREATE SESSION TO prism;
 GRANT CREATE TABLE TO prism;
@@ -131,7 +124,7 @@ PROMPT         Privileges granted.
 
 ---
 
-## Step 5: Verify the Model
+## Step 4: Verify the Model
 
 ```sql
 -- Check the model exists
@@ -159,21 +152,11 @@ You should see a long vector of floating point numbers.
 
 ---
 
-## Step 6: Grant Access to Other Users (if loaded as a different user)
+## Step 5: Log in as PRISM user and create tables, indexes, etc.
 
-If you loaded the model as a user other than PRISM (e.g., as SYS) and the Prism application runs as the PRISM user, grant access:
-
-```sql
-GRANT SELECT ANY MINING MODEL TO prism;
--- Or more specifically:
--- GRANT EXECUTE ON MINING MODEL DEMO_MODEL TO prism;
+```bash
+sqlplus prism/<password>@localhost:1521/FREEPDB1
 ```
-
-If you loaded the model directly as the PRISM user (as in Step 4), the model is already owned by PRISM and no additional grant is needed.
-
----
-
-## Step 7: Log in as PRISM user and create tables, indexes, etc.
 
 ```sql
 -- ----------------------------------------------------------------------------
@@ -332,8 +315,6 @@ PROMPT [8/12] ONNX Embedding Model
 PROMPT         NOTE: Model loading is environment-specific. Uncomment one of
 PROMPT         the options below or load the model manually.
 
-CREATE OR REPLACE SYNONYM demo_model FOR admin.demo_model;
-
 -- Note: The DEMO_MODEL is loaded from the Oracle-provided ONNX model
 -- repository. This step requires network access from the database.
 -- On ADB, the model may already be available. Adjust the model loading
@@ -382,6 +363,7 @@ SELECT model_name, mining_function, algorithm FROM user_mining_models WHERE mode
 
 Because you have filesystem access, there is no download-into-the-database step. The file is already where the database can read it.
 
+```sql
 -- ----------------------------------------------------------------------------
 -- 9. Create JSON Duality View
 -- ----------------------------------------------------------------------------
@@ -532,33 +514,6 @@ CREATE OR REPLACE VIEW v_chunks_unified AS
     WHERE dc.source_table = 'inspection_findings';
 
 PROMPT         View V_CHUNKS_UNIFIED created.
-
--- ----------------------------------------------------------------------------
--- 12. Placeholder: Vector Index (deferred)
--- ----------------------------------------------------------------------------
-
-PROMPT
-PROMPT [12/12] Vector index creation deferred.
-PROMPT         Run prism-indexes.sql after data loading and ingestion.
-
--- ----------------------------------------------------------------------------
--- Vector Index (deferred)
--- ----------------------------------------------------------------------------
--- Note: The vector index is created AFTER seed data and vector ingestion
--- are complete. Creating the index on an empty table is valid but the index
--- will need to be rebuilt after bulk loading. For best performance, run
--- prism-seed.py and prism-ingest.py first, then run prism-indexes.sql.
--- ----------------------------------------------------------------------------
-
--- CREATE VECTOR INDEX idx_chunk_embedding
---     ON document_chunks(embedding)
---     ORGANIZATION INMEMORY NEIGHBOR GRAPH
---     DISTANCE COSINE
---     WITH TARGET ACCURACY 95;
-
--- ----------------------------------------------------------------------------
--- Verification
--- ----------------------------------------------------------------------------
 
 PROMPT
 PROMPT --- Verification ---
