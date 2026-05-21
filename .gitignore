@@ -8,3 +8,4 @@ frontend/dist
 frontend/.env
 */.env
 schema-data/.env
+schema-data/free/.env
