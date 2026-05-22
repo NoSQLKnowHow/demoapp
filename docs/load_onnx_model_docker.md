@@ -66,11 +66,11 @@ SET VERIFY OFF
 
 PROMPT
 PROMPT ============================================================================
-PROMPT  PRISM: Database Setup
+PROMPT  PRISM: Database setup
 PROMPT ============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. Switch to PDB and Create Application User
+-- 1. Switch to PDB and create application user
 -- ----------------------------------------------------------------------------
 
 PROMPT
@@ -88,7 +88,7 @@ ALTER USER prism QUOTA UNLIMITED ON &tablespace;
 PROMPT         User PRISM created.
 
 -- ----------------------------------------------------------------------------
--- 2. Grant Privileges
+-- 2. Grant privileges
 -- ----------------------------------------------------------------------------
 
 PROMPT
@@ -125,7 +125,7 @@ PROMPT         Privileges granted.
 
 ---
 
-## Step 4: Verify the Model
+## Step 4: Verify the model
 
 ```sql
 -- Check the model exists
@@ -162,7 +162,7 @@ sqlplus prism/<password>@localhost:1521/FREEPDB1
 
 ```sql
 -- ----------------------------------------------------------------------------
--- 4. Create Canonical Tables
+-- 4. Create canonical tables
 -- ----------------------------------------------------------------------------
 
 PROMPT
@@ -193,7 +193,7 @@ CREATE TABLE infrastructure_assets (
 PROMPT         Table INFRASTRUCTURE_ASSETS created.
 
 -- ----------------------------------------------------------------------------
--- 5. Create JSON Collection Table
+-- 5. Create JSON collection table
 -- ----------------------------------------------------------------------------
 
 PROMPT
@@ -204,7 +204,7 @@ CREATE JSON COLLECTION TABLE operational_procedures;
 PROMPT         Table OPERATIONAL_PROCEDURES created.
 
 -- ----------------------------------------------------------------------------
--- 6. Create Remaining Canonical Tables
+-- 6. Create remaining canonical tables
 -- ----------------------------------------------------------------------------
 
 PROMPT
@@ -264,7 +264,7 @@ CREATE TABLE document_chunks (
 PROMPT         Table DOCUMENT_CHUNKS created.
 
 -- ----------------------------------------------------------------------------
--- 7. Create Standard Indexes
+-- 7. Create standard indexes
 -- ----------------------------------------------------------------------------
 
 PROMPT
@@ -309,7 +309,7 @@ CREATE INDEX idx_doc_chunks_source ON document_chunks(source_table, source_id);
 PROMPT         Indexes on DOCUMENT_CHUNKS created.
 
 -- ----------------------------------------------------------------------------
--- 8. Load ONNX Embedding Model
+-- 8. Load ONNX embedding model
 -- ----------------------------------------------------------------------------
 
 PROMPT
@@ -383,7 +383,7 @@ CREATE JSON RELATIONAL DUALITY VIEW inspection_report_dv AS
 PROMPT         Duality View INSPECTION_REPORT_DV created.
 
 -- ----------------------------------------------------------------------------
--- 10. Create SQL/PGQ Property Graph
+-- 10. Create SQL/PGQ property graph
 -- ----------------------------------------------------------------------------
 
 PROMPT
@@ -408,7 +408,7 @@ CREATE PROPERTY GRAPH citypulse_graph
 PROMPT         Property graph CITYPULSE_GRAPH created.
 
 -- ----------------------------------------------------------------------------
--- 11. Create Vector Chunk Views
+-- 11. Create vector chunk views
 -- ----------------------------------------------------------------------------
 -- These views pre-join DOCUMENT_CHUNKS with their source tables, making
 -- vector search queries simpler in the API layer. Individual views are
@@ -563,7 +563,7 @@ sqlplus prism/<password>@FREEPDB1
 
 PROMPT
 PROMPT ============================================================================
-PROMPT  PRISM: Post-Ingestion Index Creation
+PROMPT  PRISM: Post-ingestion index creation
 PROMPT ============================================================================
 
 PROMPT
