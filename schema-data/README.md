@@ -9,9 +9,11 @@ There are two pipelines, one for each setup:
 - `adb/` — Oracle Autonomous Database (ADB) in a LiveLabs sandbox
 - `free/` — Oracle Database 26ai Free that you set up yourself
 
-Both pipelines load the same data and produce the same end state. The
-differences are in user creation, password handling, and how the ONNX
-embedding model gets wired up.
+Both pipelines load the same CityPulse data and produce the same end
+state. They differ in user creation, password handling, how the ONNX
+embedding model gets wired up, and how the vector embeddings are
+produced: ADB loads pre-built embeddings from `document_chunks.pkl`
+(fast), while Free generates them live with `prism-ingest.py`.
 
 ## Which pipeline should I use?
 
@@ -22,9 +24,12 @@ user, places connection details in `variable.sh`, and pre-loads the
 that LiveLabs typically invokes for the workshop's database-build step.
 
 Use `free/` if you're running **Oracle Database 26ai Free** that you
-set up yourself — either locally in a Docker container, or in a LiveLabs
-sandbox that hands you a 26ai Free instance. In both cases you manage
-the database, the connection details, and the model loading.
+set up yourself — either locally in a Docker/Podman container, or in a
+LiveLabs sandbox that hands you a 26ai Free instance. In both cases you
+manage the database, the connection details, and the model loading.
+Start with `free/load_onnx_model.md`: it is the complete, start-to-finish
+guide for the Free setup, covering the ONNX model download, schema
+creation, seeding, embedding, and indexing in one place.
 
 ---
 
@@ -37,12 +42,11 @@ schema-data/
 ├── .env                              Connection details and secrets (gitignored)
 │
 ├── data/                             Shared pre-generated content
-│   ├── maintenance_logs.json         300 LLM-generated maintenance narratives
-│   ├── inspection_reports.json       60 LLM-generated inspection reports
-│   └── document_chunks.pkl           ~590 pre-chunked, pre-embedded chunks
+│   ├── maintenance_logs.json         308 LLM-generated maintenance narratives
+│   ├── inspection_reports.json       60 LLM-generated reports (222 findings)
+│   └── document_chunks.pkl           591 pre-chunked, pre-embedded chunks
 │
 ├── prism-generate.py                 Regenerate the JSON content (one-time)
-├── prism-ingest.py                   Chunk + embed source rows (fallback path)
 ├── prism-chunks-export.py            Dump document_chunks to disk
 ├── prism-indexes.sql                 Create the HNSW vector index
 ├── prism-test-search.sql             Sanity-check the vector search
@@ -52,13 +56,13 @@ schema-data/
 │   ├── prism-setup1.sql              Creates PRISM user, grants, synonyms
 │   ├── prism-setup2.sql              Creates tables, views, graph, JSON DV
 │   ├── prism-seed.py                 Loads sample data from data/*.json
+│   ├── prism-ingest.py               Chunk + embed source rows (fallback path)
 │   └── prism-chunks-import.py        Loads pre-built chunks from data/*.pkl
 │
 └── free/                             Oracle 26ai Free pipeline
-    ├── shell_script.sh               Driver: connects as SYS, runs SQL
-    ├── prism-setup.sql               Everything ADB does, in one file
+    ├── load_onnx_model.md            End-to-end Free setup guide (start here)
     ├── prism-seed.py                 Loads sample data from data/*.json
-    └── prism-chunks-import.py        Loads pre-built chunks from data/*.pkl
+    └── prism-ingest.py               Chunk + embed source rows (live embedding)
 ```
 
 The `data/` directory is **shared** between both pipelines. Both `adb/` and
@@ -99,7 +103,9 @@ For both pipelines:
 - Python 3.10+ with the packages in `requirements.txt`
 - A target database with the `VECTOR` type and `DBMS_VECTOR_CHAIN` package
   available (Oracle 23ai or 26ai)
-- The `DEMO_MODEL` ONNX model loaded in the database
+- The `DEMO_MODEL` ONNX model loaded in the database (on ADB it is
+  pre-loaded by LiveLabs; on Free you load it yourself per
+  `free/load_onnx_model.md`)
 
 ```bash
 pip install -r requirements.txt
@@ -150,30 +156,49 @@ should always be zero and means something is wrong if it isn't.
 
 ## Pipeline 2: Oracle Database 26ai Free
 
-Run these in order, from `schema-data/`:
+The Free pipeline is documented end to end in **`free/load_onnx_model.md`**.
+Unlike ADB, it has no shell-script driver and no single combined setup
+SQL file: the guide walks you through each step interactively, because
+the ONNX model download and the `docker cp` into the container are
+manual, host-specific actions. Open that guide and follow it start to
+finish. The summary below is the shape of the process, not a substitute
+for the guide.
+
+The Free pipeline uses **live embedding** (`prism-ingest.py`) rather than
+the pre-built `.pkl` import. The model is owned directly by the PRISM
+user as `DEMO_MODEL`, so chunks are embedded at ingest time.
 
 ```bash
-# 1. Create the user, schema, tables, views, graph, and JSON Duality View.
-#    Connects as SYS, runs prism-setup.sql (single combined file).
-./free/shell_script.sh
+# 1. Download the Oracle-augmented ONNX model and copy it into the
+#    running container, then load it as DEMO_MODEL into the PRISM schema.
+#    (load_onnx_model.md, Steps 1-4)
 
-# 2. Load the sample data into the source tables.
+# 2. Create the user, schema, tables, views, graph, and JSON Duality View
+#    by running the DDL inlined in the guide as the PRISM user.
+#    (load_onnx_model.md, Step 5)
+
+# 3. Load the sample data into the source tables.
 python free/prism-seed.py
 
-# 3. Load the pre-built chunks and embeddings.
-python free/prism-chunks-import.py
+# 4. Chunk and embed the source rows live, writing to document_chunks.
+python free/prism-ingest.py
 
-# 4. Build the HNSW vector index.
-sqlcl sys/$ORACLE_PASSWORD@$ORACLE_DSN as sysdba @prism-indexes.sql
+# 5. Build the HNSW vector index over the now-populated table.
+sqlplus prism/$ORACLE_PASSWORD@$ORACLE_DSN @prism-indexes.sql
 
-# 5. (Optional) Sanity-check the vector search.
-sqlcl prism/$ORACLE_PASSWORD@$ORACLE_DSN @prism-test-search.sql
+# 6. (Optional) Sanity-check the vector search end-to-end.
+sqlplus prism/$ORACLE_PASSWORD@$ORACLE_DSN @prism-test-search.sql
 ```
 
-The Free pipeline is structurally identical to ADB but is typically
-faster end to end — if you're running locally, there's no network
-latency to the database; if you're in a LiveLabs 26ai Free sandbox,
-the Free instance is co-located with the workshop VM.
+Because Free embeds at ingest time, step 4 is the slow step (several
+minutes for ~591 chunks) rather than the one-second `.pkl` import the
+ADB pipeline uses. The trade-off is that the Free path needs no
+pre-built export and works against whatever model you have loaded.
+
+Whether you run locally or in a LiveLabs 26ai Free sandbox, the database
+lives close to where you run these scripts (no ADB network hop), so the
+non-embedding steps are quick. The live embedding in step 4 is the one
+part that takes real time.
 
 ---
 
@@ -241,7 +266,8 @@ Reasons to pre-generate and check in:
 
 ### When to use `prism-ingest.py` instead
 
-The fallback path. Run it when:
+On ADB this is the fallback path (the default is the fast `.pkl`
+import). On Free it is the **primary** path. Either way, run it when:
 
 - You're using a different embedding model.
 - You've regenerated the JSON content and the pre-built chunks are stale.
@@ -292,9 +318,10 @@ python prism-generate.py
 
 # Build the database from scratch using the slow path, including
 # embedding generation at load time.
-./adb/shell_script.sh     # or ./free/shell_script.sh
-python adb/prism-seed.py  # or free/
-python prism-ingest.py    # not prism-chunks-import.py this time
+#   ADB:  ./adb/shell_script.sh   then   python adb/prism-seed.py
+#   Free: follow free/load_onnx_model.md   then   python free/prism-seed.py
+# Then run the matching ingest script (NOT prism-chunks-import.py):
+python adb/prism-ingest.py   # or: python free/prism-ingest.py
 
 # Export the freshly-ingested chunks for future fast loads.
 python prism-chunks-export.py
