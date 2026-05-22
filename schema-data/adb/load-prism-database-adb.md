@@ -1,15 +1,17 @@
-# Loading an ONNX Embedding Model and Prism data set into Oracle Database Free (Docker/Podman)
+# Loading an ONNX Embedding Model and Prism data set into Oracle Autonomous Database (ADB)
 
-> **Running Oracle Autonomous Database (ADB) in OCI instead?** This guide does not apply to you. ADB has no filesystem access to the database server, so you must stage the model through OCI Object Storage. See [load_onnx_model_adb.md](load_onnx_model_adb.md) for that approach.
+> **Running Oracle Database Free in a Docker/Podman container instead?** This guide does not apply to you. On Free you have direct filesystem access to the database server, so you copy the model in with `docker cp` and load it from a local directory. See [../free/load-prism-database-free.md](../free/load-prism-database-free.md) for that approach.
 
-On Oracle Database Free in a Docker or Podman container, you have direct filesystem access to the database server, so loading an ONNX model is straightforward: copy the file into the container, point a database directory at it, and load it with `DBMS_VECTOR`. No Object Storage, no credentials, no PAR URLs needed. This guide is geared more towards using Docker, but it could be easily changed for Podman since the images are interchangeable.
+On Oracle Autonomous Database you have no filesystem access to the database server, so you cannot copy an ONNX model onto the host. Instead you stage the model in OCI Object Storage, pull it into the built-in `DATA_PUMP_DIR` directory with `DBMS_CLOUD.GET_OBJECT`, and load it with `DBMS_VECTOR.LOAD_ONNX_MODEL`. The model is loaded into the `ADMIN` schema and exposed to the `PRISM` user through a grant and a public synonym, so application code can reference it by the bare name `DEMO_MODEL`.
+
+The model-loading steps (Steps 1 through 4) are run as `ADMIN`. The schema creation (Step 5) is run as `PRISM`.
 
 ## Prerequisites
 
-- A running Oracle Database Free imag in either a Docker or Podman container
-- The ability to run something like `docker cp` to copy and a file into that container (host shell access)
-- `sysdba` access to the container's database, plus the PRISM user (created by `prism-setup.sql`)
-- python 3.10+
+- An Oracle Autonomous Database instance (running 23ai or 26ai) with `ADMIN` access
+- An OCI Object Storage bucket you can upload to and create a Pre-Authenticated Request (PAR) on
+- A SQL client connected through the ADB wallet (SQL Developer, SQLcl, or sqlplus with the wallet configured)
+- python 3.10+ for the seed and ingest scripts
 
 ---
 
@@ -33,55 +35,147 @@ You'll get `all_MiniLM_L12_v2.onnx` (about 133 MB).
 
 ---
 
-## Step 2: Copy the Model into the Docker/Podman container
+## Step 2: Upload the Model to OCI Object Storage and Create a PAR
 
-From your host machine, copy the model into a directory inside the running container. Replace `<container_name>` with your container's name (find it with `docker ps` in Docker).
+Because ADB cannot read your local filesystem, the model has to live somewhere ADB can reach over HTTPS. Object Storage is that place.
 
-```bash
-# Create the target directory inside the container (if it doesn't exist)
-docker exec <container_name> mkdir -p /opt/oracle/models
+1. In the OCI Console, open **Storage > Buckets** and pick (or create) a bucket in the same tenancy as your ADB.
+2. Upload `all_MiniLM_L12_v2.onnx` into the bucket.
+3. On the uploaded object, create a **Pre-Authenticated Request (PAR)**:
+   - Scope: **Object** (this single object), not the whole bucket.
+   - Access type: **Permit object reads** only.
+   - Set a reasonable expiry. You only need it long enough to run Step 3 once.
+4. Copy the generated PAR URL. It looks like:
 
-# Copy the model into the container
-docker cp all_MiniLM_L12_v2.onnx <container_name>:/opt/oracle/models/
-```
+   ```
+   https://objectstorage.<region>.oraclecloud.com/p/<long-token>/n/<namespace>/b/<bucket>/o/all_MiniLM_L12_v2.onnx
+   ```
 
-Again, these instructions are for Docker, so please translate to Podman when appropriate.
+A PAR is the lightest auth path: the URL itself carries the authorization, so no `DBMS_CLOUD` credential is required for the pull in Step 3. Treat the PAR URL as a secret while it is live, and let it expire once the model is loaded.
 
 ---
 
-## Step 3: Create the `prism` user and grant privs as `SYS` or `SYSDBA`
+## Step 3: Pull the Model into DATA_PUMP_DIR (as ADMIN)
 
-Connect as `sys` or `sysdba` and create the prism user, grant privs to that user, then create an Oracle directory object that maps to the container path, then grant the `prism` user access to that directory.
+Connect to the database as `ADMIN` through your wallet:
 
 ```bash
-sqlplus sys/<password>@localhost:1521/FREEPDB1 as sysdba
+sqlplus admin/<password>@<adb_tns_alias>
 ```
 
+Pull the object from the PAR URL into the built-in `DATA_PUMP_DIR`. `DATA_PUMP_DIR` exists on every ADB by default and `ADMIN` can already write to it, so there is no `CREATE DIRECTORY` step.
+
 ```sql
-DEFINE tablespace = USERS
-DEFINE pdb_name   = FREEPDB1
+BEGIN
+    DBMS_CLOUD.GET_OBJECT(
+        object_uri      => 'https://objectstorage.<region>.oraclecloud.com/p/<long-token>/n/<namespace>/b/<bucket>/o/all_MiniLM_L12_v2.onnx',
+        directory_name  => 'DATA_PUMP_DIR'
+    );
+END;
+/
+```
+
+Because we are using a PAR, no `credential_name` argument is passed. (If you were using a private bucket without a PAR, you would first call `DBMS_CLOUD.CREATE_CREDENTIAL` and pass its name here.)
+
+Confirm the file landed:
+
+```sql
+SELECT object_name, bytes
+FROM DBMS_CLOUD.LIST_FILES('DATA_PUMP_DIR')
+WHERE object_name = 'all_MiniLM_L12_v2.onnx';
+```
+
+You should see the file at roughly 133 MB.
+
+---
+
+## Step 4: Load the ONNX Model (as ADMIN)
+
+Still connected as `ADMIN`, load the staged file into the database as a mining model named `DEMO_MODEL`, then grant the `PRISM` user access to it.
+
+```sql
+SET SERVEROUTPUT ON
+
+DECLARE
+    v_model_name VARCHAR2(100) := 'DEMO_MODEL';
+    v_onnx_file  VARCHAR2(100) := 'all_MiniLM_L12_v2.onnx';
+BEGIN
+    -- Drop existing model if re-running
+    BEGIN
+        DBMS_VECTOR.DROP_ONNX_MODEL(model_name => v_model_name, force => TRUE);
+        DBMS_OUTPUT.PUT_LINE('Dropped existing model: ' || v_model_name);
+    EXCEPTION
+        WHEN OTHERS THEN NULL;
+    END;
+
+    -- Load the ONNX model from DATA_PUMP_DIR into the ADMIN schema
+    DBMS_OUTPUT.PUT_LINE('Loading ONNX model into database...');
+    DBMS_VECTOR.LOAD_ONNX_MODEL(
+        directory  => 'DATA_PUMP_DIR',
+        file_name  => v_onnx_file,
+        model_name => v_model_name
+    );
+    DBMS_OUTPUT.PUT_LINE('Model loaded successfully: ' || v_model_name);
+END;
+/
+```
+
+The model is now owned by `ADMIN`. Expose it to `PRISM` so application code can call it by its bare name. The `PRISM` user is created in Step 5; if you have not created it yet, run these two grants after Step 5 instead.
+
+```sql
+-- Let PRISM use the model
+GRANT MINING MODEL SELECT ON ADMIN.DEMO_MODEL TO prism;
+
+-- Public synonym so PRISM (and any other user) references it as DEMO_MODEL,
+-- not ADMIN.DEMO_MODEL, in VECTOR_EMBEDDING() calls.
+CREATE OR REPLACE PUBLIC SYNONYM demo_model FOR admin.demo_model;
+```
+
+Verify the model loaded and produces vectors:
+
+```sql
+-- Check the model exists
+SELECT model_name, algorithm, mining_function, model_size
+FROM all_mining_models
+WHERE model_name = 'DEMO_MODEL';
+
+-- Generate a test embedding
+SELECT VECTOR_EMBEDDING(DEMO_MODEL USING 'The quick brown fox' AS data) AS embedding
+FROM dual;
+```
+
+You should see one row in the first query and a long vector of floating point numbers in the second.
+
+---
+
+## Step 5: Create the PRISM user, schema, tables, and views
+
+The PRISM user is created by `ADMIN`. On ADB the user gets the `DATA` tablespace (the default application tablespace), which differs from the Free pipeline's `USERS` tablespace.
+
+Connect as `ADMIN` and create the user and grants:
+
+```sql
+DEFINE tablespace = DATA
 DEFINE dbpassword = "WelcometoOracle26ai"
 
 SET VERIFY OFF
 
 PROMPT
 PROMPT ============================================================================
-PROMPT  PRISM: Database setup
+PROMPT  PRISM: Database setup (ADB)
 PROMPT ============================================================================
 
 -- ----------------------------------------------------------------------------
--- 1. Switch to PDB and create application user
+-- 1. Create application user
 -- ----------------------------------------------------------------------------
 
 PROMPT
 PROMPT [1/12] Creating PRISM user...
 
-ALTER SESSION SET CONTAINER = &pdb_name;
-
 -- Drop existing user if re-running (comment out for first-time setup)
 DROP USER IF EXISTS prism CASCADE;
 
-CREATE USER prism IDENTIFIED BY &dbpassword DEFAULT TABLESPACE &tablespace TEMPORARY TABLESPACE TEMP;
+CREATE USER prism IDENTIFIED BY &dbpassword;
 
 ALTER USER prism QUOTA UNLIMITED ON &tablespace;
 
@@ -95,8 +189,6 @@ PROMPT
 PROMPT [2/12] Granting privileges...
 
 -- Session and object creation
-CREATE OR REPLACE DIRECTORY model_dir AS '/opt/oracle/models';
-GRANT CONNECT, RESOURCE TO PRISM;
 GRANT CREATE SESSION TO prism;
 GRANT CREATE TABLE TO prism;
 GRANT CREATE VIEW TO prism;
@@ -115,49 +207,17 @@ GRANT DB_DEVELOPER_ROLE TO prism;
 GRANT EXECUTE ON DBMS_VECTOR TO prism;
 GRANT EXECUTE ON DBMS_VECTOR_CHAIN TO prism;
 
--- Grant access to the DEMO_MODEL ONNX embedding model
--- and create a public synonym so PRISM (and any other user) can reference
--- it by its bare name in VECTOR_EMBEDDING() calls.
-GRANT READ, WRITE ON DIRECTORY model_dir TO prism;
+-- Model access (also shown in Step 4). Safe to run again here.
+GRANT MINING MODEL SELECT ON ADMIN.DEMO_MODEL TO prism;
+CREATE OR REPLACE PUBLIC SYNONYM demo_model FOR admin.demo_model;
 
 PROMPT         Privileges granted.
 ```
 
----
-
-## Step 4: Verify the model
-
-```sql
--- Check the model exists
-SELECT model_name, algorithm, mining_function, model_size
-FROM user_mining_models
-WHERE model_name = 'DEMO_MODEL';
-```
-
-Expected output:
-```
-MODEL_NAME    ALGORITHM  MINING_FUNCTION  MODEL_SIZE
-----------    ---------  ---------------  ----------
-DEMO_MODEL    ONNX       EMBEDDING        133322334
-```
-
-Test embedding generation:
-
-```sql
--- Generate a test embedding
-SELECT VECTOR_EMBEDDING(DEMO_MODEL USING 'The quick brown fox' AS data) AS embedding
-FROM dual;
-```
-
-You should see a long vector of floating point numbers.
-
----
-
-## Step 5: Log in as PRISM user and create tables, indexes, etc.
+Now connect as the `PRISM` user to create the schema objects:
 
 ```bash
-# log in as the PRISM user and run the SQL commands below.
-sqlplus prism/<password>@localhost:1521/FREEPDB1
+sqlplus prism/<password>@<adb_tns_alias>
 ```
 
 ```sql
@@ -309,52 +369,17 @@ CREATE INDEX idx_doc_chunks_source ON document_chunks(source_table, source_id);
 PROMPT         Indexes on DOCUMENT_CHUNKS created.
 
 -- ----------------------------------------------------------------------------
--- 8. Load ONNX embedding model
+-- 8. ONNX embedding model
 -- ----------------------------------------------------------------------------
 
 PROMPT
-PROMPT [8/12] ONNX Embedding Model
-PROMPT         NOTE: Model loading is environment-specific. Uncomment one of
-PROMPT         the options below or load the model manually.
+PROMPT [8/12] ONNX embedding model already loaded by ADMIN (Steps 1-4).
+PROMPT         PRISM reaches it via the DEMO_MODEL public synonym.
 
--- Note: The DEMO_MODEL is loaded from the Oracle-provided ONNX model
--- repository. This step requires network access from the database.
--- On ADB, the model may already be available. Adjust the model loading
--- approach based on your environment.
-
--- ============================================================
--- Run as: PRISM (or any user with CREATE MINING MODEL privilege
---         and READ on MODEL_DIR)
--- ============================================================
-
-SET SERVEROUTPUT ON
-
-DECLARE
-    -- >>> EDIT THESE VALUES <<<
-    v_model_name VARCHAR2(100) := 'DEMO_MODEL';
-    v_onnx_file  VARCHAR2(100) := 'all_MiniLM_L12_v2.onnx';
-BEGIN
-    -- Drop existing model if re-running
-    BEGIN
-        DBMS_VECTOR.DROP_ONNX_MODEL(model_name => v_model_name, force => TRUE);
-        DBMS_OUTPUT.PUT_LINE('Dropped existing model: ' || v_model_name);
-    EXCEPTION
-        WHEN OTHERS THEN NULL;
-    END;
-
-    -- Load the ONNX model from MODEL_DIR into the database
-    DBMS_OUTPUT.PUT_LINE('Loading ONNX model into database...');
-    DBMS_VECTOR.LOAD_ONNX_MODEL(
-        directory  => 'MODEL_DIR',
-        file_name  => v_onnx_file,
-        model_name => v_model_name
-    );
-    DBMS_OUTPUT.PUT_LINE('Model loaded successfully: ' || v_model_name);
-END;
-/
-
--- Verify model is loaded
-SELECT model_name, mining_function, algorithm FROM user_mining_models WHERE model_name = 'DEMO_MODEL';
+-- Confirm PRISM can see the model through the synonym
+SELECT model_name, mining_function, algorithm
+FROM all_mining_models
+WHERE model_name = 'DEMO_MODEL';
 
 -- ----------------------------------------------------------------------------
 -- 9. Create JSON Duality View
@@ -449,7 +474,7 @@ CREATE OR REPLACE VIEW v_chunks_inspection_reports AS
     JOIN districts d ON a.district_id = d.district_id
     WHERE dc.source_table = 'inspection_reports';
 
-PROMPT    View V_CHUNKS_INSPECTION_REPORTS created.
+PROMPT         View V_CHUNKS_INSPECTION_REPORTS created.
 
 -- Individual source view: inspection finding chunks
 CREATE OR REPLACE VIEW v_chunks_inspection_findings AS
@@ -466,7 +491,7 @@ CREATE OR REPLACE VIEW v_chunks_inspection_findings AS
     JOIN districts d ON a.district_id = d.district_id
     WHERE dc.source_table = 'inspection_findings';
 
-PROMPT   View V_CHUNKS_INSPECTION_FINDINGS created.
+PROMPT         View V_CHUNKS_INSPECTION_FINDINGS created.
 
 -- Unified view: all chunks joined to source data with common columns.
 -- This is the primary view for cross-source vector search in the API.
@@ -505,7 +530,7 @@ CREATE OR REPLACE VIEW v_chunks_unified AS
     JOIN districts d ON a.district_id = d.district_id
     WHERE dc.source_table = 'inspection_findings';
 
-PROMPT  View V_CHUNKS_UNIFIED created.
+PROMPT         View V_CHUNKS_UNIFIED created.
 
 PROMPT
 PROMPT --- Verification ---
@@ -534,7 +559,7 @@ SELECT index_name, table_name FROM user_indexes ORDER BY table_name, index_name;
 
 ## Step 6: Importing data into the database and create vector embeddings
 
-Run python script to populate database with workshop data. 
+Run the Python scripts to populate the database with workshop data. These connect through the ADB wallet using the connection details in `.env`.
 
 ``` bash
 # Populate tables with data.
@@ -544,18 +569,19 @@ python3 prism-seed.py
 python3 prism-ingest.py
 ```
 
+`prism-ingest.py` embeds every chunk live using `DEMO_MODEL`. This is the slow step: it takes several minutes for the full dataset because each chunk requires a forward pass through the ONNX model. (A faster pre-built path exists, `prism-chunks-import.py`, which loads embeddings from `../data/document_chunks.pkl` in about a second. See `../README.md` for when to use it.)
+
 ---
 
 ## Step 7: Create vector index
 
+Connect as the `PRISM` user and create the HNSW index after the data is loaded and embedded.
+
 ```sql
 ------------------------------------------------------------------------------
---1. Log into database as prism user
+-- 1. Log into database as prism user
 ------------------------------------------------------------------------------
-PROMPT
-PROMPT [1/3] log in as prism user...
-
-sqlplus prism/<password>@FREEPDB1
+-- sqlplus prism/<password>@<adb_tns_alias>
 
 ------------------------------------------------------------------------------
 -- 2. Create vector index
@@ -600,15 +626,20 @@ PROMPT  Vector index created successfully.
 PROMPT  Prism database is ready to use.
 PROMPT ============================================================================
 PROMPT
-
 ```
 
 ---
 
 ## Troubleshooting
 
-**ORA-29532 / "directory not found" or "file not found"** -- The `MODEL_DIR` directory object doesn't point at the right path, the file wasn't copied into the container, or the PRISM user lacks READ on the directory. Confirm the file exists inside the container with `docker exec <container_name> ls -l /opt/oracle/models`, and re-check Step 3.
+**ORA-20404: Object not found** (from `DBMS_CLOUD.GET_OBJECT`) -- The PAR URL is wrong, expired, or scoped to the bucket instead of the object. Regenerate the PAR on the specific object with "Permit object reads" and try again.
+
+**ORA-29532 / "directory not found" or "file not found"** (from `LOAD_ONNX_MODEL`) -- The file did not land in `DATA_PUMP_DIR`, or the name passed to `file_name` does not match. Re-run the `DBMS_CLOUD.LIST_FILES('DATA_PUMP_DIR')` check from Step 3 and confirm the exact object name.
 
 **ORA-13606: Error from Python** -- You're trying to load a raw Hugging Face model that hasn't been augmented with the required pre/post-processing steps. Use Oracle's pre-built augmented model from the download link in Step 1.
 
 **ORA-54426: Tensor "input_ids" contains 2 batch dimensions** -- Same issue as above. The model needs to be augmented using OML4Py before loading. Use the pre-built version to avoid this.
+
+**`VECTOR_EMBEDDING(DEMO_MODEL ...)` raises "model does not exist" as PRISM** -- The grant or synonym from Step 4 did not run. As `ADMIN`, re-run `GRANT MINING MODEL SELECT ON ADMIN.DEMO_MODEL TO prism;` and `CREATE OR REPLACE PUBLIC SYNONYM demo_model FOR admin.demo_model;`.
+
+---

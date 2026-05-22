@@ -15,7 +15,7 @@ Run before: prism-indexes.sql
 
 Requires:
     - python-oracledb
-    - DEMO_MODEL loaded in the database (see prism-setup.sql Section 8)
+    - DEMO_MODEL loaded in the database (see load-prism-database-adb.md)
     - Environment variables (see .env)
 ============================================================================
 """
@@ -41,7 +41,7 @@ oracledb.defaults.fetch_lobs = False
 
 ORACLE_DSN = os.environ.get("DBCONNECTION", "aidbfree:1521/freepdb1")
 ORACLE_USER = os.environ.get("ORACLE_USER", "prism")
-ORACLE_PASSWORD = os.environ.get("DBPASSWORD", "Welcome202626ai")
+ORACLE_PASSWORD = os.environ.get("DBPASSWORD", "WelcometoOracle26ai")
 ORACLE_WALLET_DIR = os.environ.get("ORACLE_WALLET_DIR")
 
 # Chunking configuration
@@ -50,9 +50,10 @@ CHUNK_MAX_SIZE = 1000       # maximum chunk size in characters
 CHUNK_OVERLAP = 100         # overlap between chunks in characters
 CHUNK_SPLIT_BY = "sentence" # split strategy: sentence, word, character
 
-# Embedding model name (must match what was loaded in prism-setup.sql)
-EMBEDDING_MODEL = "ALL_MINILM_L12_V2"
-EMBEDDING_MODEL_OWNER = "ADMIN"
+# Embedding model name. On ADB the model is owned by ADMIN and exposed to
+# PRISM through the public synonym DEMO_MODEL (see load-prism-database-adb.md),
+# so it is referenced here by its bare synonym name.
+EMBEDDING_MODEL = "DEMO_MODEL"
 
 # Batch size for database operations
 BATCH_SIZE = 50
@@ -163,7 +164,7 @@ def chunk_and_embed(cursor, source_table, source_id, text):
                 :source_id,
                 :chunk_seq,
                 :chunk_text,
-                VECTOR_EMBEDDING({EMBEDDING_MODEL_OWNER}.{EMBEDDING_MODEL} USING :chunk_text AS data)
+                VECTOR_EMBEDDING({EMBEDDING_MODEL} USING :chunk_text AS data)
             )
         """, {
             "source_table": source_table,
@@ -320,7 +321,7 @@ def main():
     model = cursor.fetchone()
     if not model:
         print(f"  ERROR: Embedding model '{EMBEDDING_MODEL}' not found.")
-        print("  Load the ONNX model first (see prism-setup.sql Section 8).")
+        print("  Load the ONNX model first (see load-prism-database-adb.md).")
         cursor.close()
         conn.close()
         sys.exit(1)

@@ -15,7 +15,7 @@ Run before: prism-indexes.sql
 
 Requires:
     - python-oracledb
-    - DEMO_MODEL loaded in the database (see load_onnx_model.md)
+    - DEMO_MODEL loaded in the database (see load-prism-database-free.md)
     - Environment variables (see .env)
 ============================================================================
 """
@@ -50,7 +50,7 @@ CHUNK_MAX_SIZE = 1000       # maximum chunk size in characters
 CHUNK_OVERLAP = 100         # overlap between chunks in characters
 CHUNK_SPLIT_BY = "sentence" # split strategy: sentence, word, character
 
-# Embedding model name (must match what was loaded in load_onnx_model.md)
+# Embedding model name (must match what was loaded in load-prism-database-free.md)
 EMBEDDING_MODEL = "DEMO_MODEL"
 
 # Batch size for database operations
@@ -319,7 +319,7 @@ def main():
     model = cursor.fetchone()
     if not model:
         print(f"  ERROR: Embedding model '{EMBEDDING_MODEL}' not found.")
-        print("  Load the ONNX model first (see load_onnx_model.md).")
+        print("  Load the ONNX model first (see load-prism-database-free.md).")
         cursor.close()
         conn.close()
         sys.exit(1)
