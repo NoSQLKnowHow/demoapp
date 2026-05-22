@@ -39,9 +39,9 @@ oracledb.defaults.fetch_lobs = False
 # Configuration
 # ============================================================================
 
-ORACLE_DSN = os.environ.get("ORACLE_DSN")
+ORACLE_DSN = os.environ.get("DBCONNECTION", "aidbfree:1521/freepdb1")
 ORACLE_USER = os.environ.get("ORACLE_USER", "prism")
-ORACLE_PASSWORD = os.environ.get("ORACLE_PASSWORD")
+ORACLE_PASSWORD = os.environ.get("DBPASSWORD", "Welcome202626ai")
 ORACLE_WALLET_DIR = os.environ.get("ORACLE_WALLET_DIR")
 
 # Chunking configuration
@@ -51,7 +51,8 @@ CHUNK_OVERLAP = 100         # overlap between chunks in characters
 CHUNK_SPLIT_BY = "sentence" # split strategy: sentence, word, character
 
 # Embedding model name (must match what was loaded in prism-setup.sql)
-EMBEDDING_MODEL = "DEMO_MODEL"
+EMBEDDING_MODEL = "ALL_MINILM_L12_V2"
+EMBEDDING_MODEL_OWNER = "ADMIN"
 
 # Batch size for database operations
 BATCH_SIZE = 50
@@ -162,7 +163,7 @@ def chunk_and_embed(cursor, source_table, source_id, text):
                 :source_id,
                 :chunk_seq,
                 :chunk_text,
-                VECTOR_EMBEDDING({EMBEDDING_MODEL} USING :chunk_text AS data)
+                VECTOR_EMBEDDING({EMBEDDING_MODEL_OWNER}.{EMBEDDING_MODEL} USING :chunk_text AS data)
             )
         """, {
             "source_table": source_table,
@@ -314,7 +315,7 @@ def main():
     # Verify DEMO_MODEL is loaded
     print("\nVerifying embedding model...")
     cursor.execute("""
-        SELECT model_name FROM user_mining_models WHERE model_name = :model_name
+        SELECT owner, model_name FROM all_mining_models WHERE model_name = :model_name;
     """, {"model_name": EMBEDDING_MODEL})
     model = cursor.fetchone()
     if not model:

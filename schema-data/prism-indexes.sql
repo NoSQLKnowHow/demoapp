@@ -10,31 +10,10 @@
 --               These should match the values used in prism-setup.sql.
 -- ============================================================================
 
--- >>> EDIT THESE VALUES BEFORE RUNNING <<<
-DEFINE prism_password = CHANGE_ME
-DEFINE db_service     = 192.168.69.20:1521/FREEPDB1
-
-SET VERIFY OFF
-
 PROMPT
 PROMPT ============================================================================
 PROMPT  PRISM: Post-Ingestion Index Creation
 PROMPT ============================================================================
-
--- ----------------------------------------------------------------------------
--- 1. Connect as PRISM User
--- ----------------------------------------------------------------------------
-
-PROMPT
-PROMPT [1/3] Connecting as PRISM user...
-
-CONNECT prism/"&prism_password"@"&db_service"
-
-PROMPT         Connected as PRISM.
-
--- ----------------------------------------------------------------------------
--- 2. Create Vector Index (HNSW)
--- ----------------------------------------------------------------------------
 
 PROMPT
 PROMPT [2/3] Creating HNSW vector index on DOCUMENT_CHUNKS...
