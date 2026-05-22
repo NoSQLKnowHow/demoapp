@@ -15,7 +15,7 @@ On Oracle Database Free in a Docker or Podman container, you have direct filesys
 
 ## Step 1: Download the Pre-Built ONNX Model
 
-Oracle provides a pre-built, augmented version of the all-MiniLM-L12-v2 model that works directly with AI Vector Search. No conversion or augmentation needed.
+Oracle offers a pre-built, augmented version of the all-MiniLM-L12-v2 model that works directly with AI Vector Search. No conversion or augmentation needed.
 
 Download it from Oracle's public bucket:
 
@@ -23,7 +23,7 @@ Download it from Oracle's public bucket:
 wget https://adwc4pm.objectstorage.us-ashburn-1.oci.customer-oci.com/p/VBRD9P8ZFWkKvnfhrWxkpPe8K03-JIoM5h_8EJyJcpE80c108fuUjg7R5L5O7mMZ/n/adwc4pm/b/OML-Resources/o/all_MiniLM_L12_v2_augmented.zip
 ```
 
-Unzip it:
+Unzip the file:
 
 ```bash
 unzip all_MiniLM_L12_v2_augmented.zip
@@ -45,13 +45,13 @@ docker exec <container_name> mkdir -p /opt/oracle/models
 docker cp all_MiniLM_L12_v2.onnx <container_name>:/opt/oracle/models/
 ```
 
-Again, these instructions are for Docker, so translate to Podman if that's what you're using.
+Again, these instructions are for Docker, so please translate to Podman when appropriate.
 
 ---
 
-## Step 3: Create the `prism` user and grant privs as `SYS`
+## Step 3: Create the `prism` user and grant privs as `SYS` or `SYSDBA`
 
-Connect as `sysdba` and create an Oracle directory object that maps to the container path, then grant the `prism` user access to it.
+Connect as `sys` or `sysdba` and create the prism user, grant privs to that user, then create an Oracle directory object that maps to the container path, then grant the `prism` user access to that directory.
 
 ```bash
 sqlplus sys/<password>@localhost:1521/FREEPDB1 as sysdba
@@ -115,7 +115,7 @@ GRANT DB_DEVELOPER_ROLE TO prism;
 GRANT EXECUTE ON DBMS_VECTOR TO prism;
 GRANT EXECUTE ON DBMS_VECTOR_CHAIN TO prism;
 
--- Grant access to the DEMO_MODEL ONNX embedding model (owned by ADMIN)
+-- Grant access to the DEMO_MODEL ONNX embedding model
 -- and create a public synonym so PRISM (and any other user) can reference
 -- it by its bare name in VECTOR_EMBEDDING() calls.
 GRANT READ, WRITE ON DIRECTORY model_dir TO prism;
@@ -156,6 +156,7 @@ You should see a long vector of floating point numbers.
 ## Step 5: Log in as PRISM user and create tables, indexes, etc.
 
 ```bash
+# log in as the PRISM user and run the SQL commands below.
 sqlplus prism/<password>@localhost:1521/FREEPDB1
 ```
 
@@ -355,16 +356,6 @@ END;
 -- Verify model is loaded
 SELECT model_name, mining_function, algorithm FROM user_mining_models WHERE model_name = 'DEMO_MODEL';
 
-```
-
-**What this does:**
-
-1. Drops any existing model with the same name so the block is safe to re-run.
-2. Uses `DBMS_VECTOR.LOAD_ONNX_MODEL` to load the model directly from the `MODEL_DIR` directory (which points at `/opt/oracle/models` inside the container) into the database's model repository.
-
-Because you have filesystem access, there is no download-into-the-database step. The file is already where the database can read it.
-
-```sql
 -- ----------------------------------------------------------------------------
 -- 9. Create JSON Duality View
 -- ----------------------------------------------------------------------------
@@ -606,7 +597,7 @@ SELECT source_table, COUNT(*) AS chunk_count FROM document_chunks GROUP BY sourc
 PROMPT
 PROMPT ============================================================================
 PROMPT  Vector index created successfully.
-PROMPT  Prism is ready to use.
+PROMPT  Prism database is ready to use.
 PROMPT ============================================================================
 PROMPT
 
