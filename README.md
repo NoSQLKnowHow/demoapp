@@ -400,16 +400,27 @@ The notebooks run in two configurations: a local Python environment or a worksho
 
 ### 7.1 Setup steps
 
-1. Clone the repo.
-2. Copy `.env.example` to `.env` and configure database connection details (DSN, user, password, wallet directory if using ADB).
-3. Run the setup script: `prism-setup.sql` creates all schema objects (canonical tables, JSON collection, JSON Duality View, property graph). Loads the `DEMO_MODEL` ONNX embedding model.
-4. Run the seed script: `python prism-seed.py` loads CityPulse sample data from pre-generated JSON files in the `data/` directory.
-5. Run the ingestion script: `python prism-ingest.py` executes the vector ingestion pipeline (chunking, embedding, storing in DOCUMENT_CHUNKS).
-6. Run the indexes script: `prism-indexes.sql` creates the HNSW vector index.
-7. Optional: run `notebooks/rag_to_agents_prep.sql` to create the hybrid vector index used by the rag-to-agents lab.
-8. Open the notebook(s) in Jupyter and run.
+The database build (schema creation, ONNX model loading, seeding, vector
+ingestion, and indexing) lives in `schema-data/`, which has its own
+pipelines for Oracle Autonomous Database (ADB) and Oracle Database 26ai
+Free. Rather than duplicate those steps here, follow
+[`schema-data/README.md`](schema-data/README.md), which points to the
+platform-specific guide for your environment.
 
-**Note on seed data generation:** The `data/` directory ships with pre-generated JSON files for maintenance logs and inspection reports, so developers do not need LLM access to set up the database. If you need to regenerate this content (e.g., to change the volume or style), configure an LLM provider in `.env` and run `python prism-generate.py`. This is a one-time, optional step.
+Once the database is built and populated:
+
+1. Copy `.env.example` to `.env` and confirm your database connection
+   details (DSN, user, password, wallet directory if using ADB).
+2. Optional: run `notebooks/rag_to_agents_prep.sql` to create the hybrid
+   vector index used by the rag-to-agents lab.
+3. Open the notebook(s) in Jupyter and run.
+
+**Note on seed data generation:** The `data/` directory ships with
+pre-generated JSON files for maintenance logs and inspection reports, so
+developers do not need LLM access to set up the database. If you need to
+regenerate this content (e.g., to change the volume or style), configure
+an LLM provider in `.env` and run `python prism-generate.py`. This is a
+one-time, optional step. See `schema-data/README.md` for details.
 
 ### 7.2 Environment configuration
 
