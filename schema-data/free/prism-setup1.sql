@@ -15,6 +15,7 @@
 
 DEFINE tablespace = USERS
 DEFINE pdb_name   = FREEPDB1
+DEFINE dbpassword = "WelcometoOracle26ai"
 
 SET VERIFY OFF
 
@@ -35,9 +36,7 @@ ALTER SESSION SET CONTAINER = &pdb_name;
 -- Drop existing user if re-running (comment out for first-time setup)
 DROP USER IF EXISTS prism CASCADE;
 
-CREATE USER prism IDENTIFIED BY "&dbpassword";
-    DEFAULT TABLESPACE &tablespace
-    TEMPORARY TABLESPACE TEMP;
+CREATE USER prism IDENTIFIED BY WelcometoOracle26ai DEFAULT TABLESPACE &tablespace TEMPORARY TABLESPACE TEMP;
 
 ALTER USER prism QUOTA UNLIMITED ON &tablespace;
 
@@ -51,6 +50,7 @@ PROMPT
 PROMPT [2/12] Granting privileges...
 
 -- Session and object creation
+GRANT CONNECT, RESOURCE TO PRISM;
 GRANT CREATE SESSION TO prism;
 GRANT CREATE TABLE TO prism;
 GRANT CREATE VIEW TO prism;
@@ -75,7 +75,6 @@ GRANT EXECUTE ON DBMS_VECTOR_CHAIN TO prism;
 -- Grant access to the DEMO_MODEL ONNX embedding model (owned by ADMIN)
 -- and create a public synonym so PRISM (and any other user) can reference
 -- it by its bare name in VECTOR_EMBEDDING() calls.
-GRANT ALTER ON MINING MODEL ADMIN.ALL_MINILM_L12_V2 TO PRISM;
-GRANT SELECT ANY MINING MODEL TO PRISM;
+GRANT READ, WRITE ON DIRECTORY model_dir TO prism;
 
 PROMPT         Privileges granted.

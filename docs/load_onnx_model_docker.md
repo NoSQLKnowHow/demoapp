@@ -1,4 +1,4 @@
-# Loading an ONNX Embedding Model into Oracle Database Free (Docker/Podman)
+# Loading an ONNX Embedding Model and Prism data set into Oracle Database Free (Docker/Podman)
 
 > **Running Oracle Autonomous Database (ADB) in OCI instead?** This guide does not apply to you. ADB has no filesystem access to the database server, so you must stage the model through OCI Object Storage. See [load_onnx_model_adb.md](load_onnx_model_adb.md) for that approach.
 
@@ -9,6 +9,7 @@ On Oracle Database Free in a Docker or Podman container, you have direct filesys
 - A running Oracle Database Free imag in either a Docker or Podman container
 - The ability to run something like `docker cp` to copy and a file into that container (host shell access)
 - `sysdba` access to the container's database, plus the PRISM user (created by `prism-setup.sql`)
+- python 3.10+
 
 ---
 
@@ -540,23 +541,21 @@ SELECT index_name, table_name FROM user_indexes ORDER BY table_name, index_name;
 
 ---
 
-## Troubleshooting
+## Step 6: Importing data into the database and create vector embeddings
 
-**ORA-29532 / "directory not found" or "file not found"** -- The `MODEL_DIR` directory object doesn't point at the right path, the file wasn't copied into the container, or the PRISM user lacks READ on the directory. Confirm the file exists inside the container with `docker exec <container_name> ls -l /opt/oracle/models`, and re-check Step 3.
-
-**ORA-13606: Error from Python** -- You're trying to load a raw Hugging Face model that hasn't been augmented with the required pre/post-processing steps. Use Oracle's pre-built augmented model from the download link in Step 1.
-
-**ORA-54426: Tensor "input_ids" contains 2 batch dimensions** -- Same issue as above. The model needs to be augmented using OML4Py before loading. Use the pre-built version to avoid this.
-
-## Step 6: Importing data into the database
-
-Run python script to pre-populate database with workshop data. 
+Run python script to populate database with workshop data. 
 
 ``` bash
-python prism-seed.py
+# Populate tables with data.
+python3 prism-seed.py
+
+# Create vector embeddings in document_chunks table
+python3 prism-ingest.py
 ```
 
-## Step 7: Create vector embeddings
+---
+
+## Step 7: Create vector index
 
 ```sql
 ------------------------------------------------------------------------------
@@ -612,3 +611,13 @@ PROMPT =========================================================================
 PROMPT
 
 ```
+
+---
+
+## Troubleshooting
+
+**ORA-29532 / "directory not found" or "file not found"** -- The `MODEL_DIR` directory object doesn't point at the right path, the file wasn't copied into the container, or the PRISM user lacks READ on the directory. Confirm the file exists inside the container with `docker exec <container_name> ls -l /opt/oracle/models`, and re-check Step 3.
+
+**ORA-13606: Error from Python** -- You're trying to load a raw Hugging Face model that hasn't been augmented with the required pre/post-processing steps. Use Oracle's pre-built augmented model from the download link in Step 1.
+
+**ORA-54426: Tensor "input_ids" contains 2 batch dimensions** -- Same issue as above. The model needs to be augmented using OML4Py before loading. Use the pre-built version to avoid this.
