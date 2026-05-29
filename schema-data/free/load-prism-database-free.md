@@ -157,7 +157,7 @@ You should see a long vector of floating point numbers.
 
 ```bash
 # log in as the PRISM user and run the SQL commands below.
-sqlplus prism/<password>@localhost:1521/FREEPDB1
+sqlplus prism/<password>@adbfree/FREEPDB1
 ```
 
 ```sql
